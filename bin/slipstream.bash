@@ -229,8 +229,8 @@ If you wish to continue, then this is what I'll be doing:
     - MariaDB (InnoDB tweaks, etc.)
     - Php.ini (Misc. configurations)
     - Apache2 (Enable modules, and add wildcard vhost conf)
-      [including ServerAlias for *.localhost.metaltoad-sites.com]
-    - Dnsmasq (Resolve *.dev domains w/OUT /etc/hosts editing)
+      [including ServerAlias for *.localhost.alt-3.com]
+    - Dnsmasq (Resolve *.localhost.alt-3.com domains w/OUT /etc/hosts editing)
 EOT
 
 read -r -p "Hit [enter] to start or control-c to quit: " dummy
@@ -429,11 +429,11 @@ PHP_FPM_PROXY="fcgi://localhost/"
 
 [[ ! -d /usr/local/var/run ]] && mkdir -p /usr/local/var/run
 
-if [[ ! -f /etc/apache2/extra/dev.conf ]] || ! qt grep "$PHP_FPM_HANDLER" /etc/apache2/extra/dev.conf || ! qt grep \\.localhost\\.metaltoad-sites\\.com /etc/apache2/extra/dev.conf; then
+if [[ ! -f /etc/apache2/extra/dev.conf ]] || ! qt grep "$PHP_FPM_HANDLER" /etc/apache2/extra/dev.conf || ! qt grep \\.localhost\\.alt-3\\.com /etc/apache2/extra/dev.conf; then
   cat <<EOT | qt sudo tee /etc/apache2/extra/dev.conf
 <VirtualHost *:80>
   ServerAdmin $USER@localhost
-  ServerAlias *.dev *.vmdev *.localhost.metaltoad-sites.com
+  ServerAlias *.dev *.vmdev *.localhost.alt-3.com
   VirtualDocumentRoot $DEV_DIR/%1/webroot
 
   UseCanonicalName Off
@@ -473,7 +473,7 @@ if [[ ! -f /etc/apache2/extra/dev.conf ]] || ! qt grep "$PHP_FPM_HANDLER" /etc/a
 Listen 443
 <VirtualHost *:443>
   ServerAdmin $USER@localhost
-  ServerAlias *.dev *.vmdev *.localhost.metaltoad-sites.com
+  ServerAlias *.dev *.vmdev *.localhost.alt-3.com
   VirtualDocumentRoot $DEV_DIR/%1/webroot
 
   SSLEngine On
@@ -805,7 +805,7 @@ cat <<EOT > "$DEV_DIR/slipstream/webroot/index.php"
   the website will be served at:
   <ul>
     <li>http://your-website.dev/ and</li>
-    <li>http://your-site.localhost.metaltoad-sites.com/</li>
+    <li>http://your-site.localhost.alt-3.com/</li>
   </ul>
   automatically.
 </p>
