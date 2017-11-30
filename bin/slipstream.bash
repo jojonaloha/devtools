@@ -573,6 +573,7 @@ if [[ ! -f /etc/homebrew/etc/dnsmasq.conf ]]; then
   show_status 'Creating: /etc/homebrew/etc/dnsmasq.conf'
   cat <<EOT | qt sudo tee /etc/homebrew/etc/dnsmasq.conf
 address=/.dev/127.0.0.1
+address=/.localhost.alt-3.com/127.0.0.1
 EOT
   show_status 'Linking to: /usr/local/etc/dnsmasq.conf'
   ln -svf /etc/homebrew/etc/dnsmasq.conf /usr/local/etc/dnsmasq.conf
