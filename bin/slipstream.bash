@@ -44,14 +44,15 @@ fi
 # -- CHECK MAC AND VERSION ----------------------------------------------------
 if [[ $OSTYPE == darwin* ]]; then
   OSX_VERSION="$(sw_vers -productVersion)"
-  [[ "$OSX_VERSION" =~ 10.1[012] ]]
+  [[ "$OSX_VERSION" =~ 10.1[0123] ]]
 
   if [[ $? -ne 0 ]]; then
     cat <<EOT
 Sorry! This script is currently only compatible with:
-  Yosemite   (10.10*)
-  El Capitan (10.11*)
-  Sierra     (10.12*)
+  Yosemite    (10.10*)
+  El Capitan  (10.11*)
+  Sierra      (10.12*)
+  High Sierra (10.13*)
 You're running:
 
 $(sw_vers)
@@ -629,6 +630,7 @@ for i in /usr/local/etc/php/*/php.ini; do
     sudo sed -i .bak '
       s|max_execution_time = 30|max_execution_time = 0|
       s|max_input_time = 60|max_input_time = 1800|
+      s|; *max_input_vars = 1000|max_input_vars = 10000|
       s|memory_limit = 128M|memory_limit = 256M|
       s|display_errors = Off|display_errors = On|
       s|display_startup_errors = Off|display_startup_errors = On|
@@ -874,7 +876,6 @@ sublime-text
 clipy
 # gimp
 google-chrome
-google-hangouts
 iterm2
 # Apple Java
 # http://apple.stackexchange.com/questions/153584/install-java-jre-6-next-to-jre-7-on-os-x-10-10-yosemite
@@ -894,15 +895,13 @@ vlc
 # This is dumb. Drush has a dependency on brew php, and composer but won't
 # install them automatically. This entire script depends on 'sort -u' to
 # determine what needs to be installed... so, creating php.
-php55
-php55-mcrypt
-php55-opcache
-php55-xdebug
 php56
+php56-memcached
 php56-mcrypt
 php56-opcache
 php56-xdebug
 php70
+php70-memcached
 php70-mcrypt
 php70-opcache
 php70-xdebug
