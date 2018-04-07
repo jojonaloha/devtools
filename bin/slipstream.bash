@@ -89,7 +89,7 @@ function clean() {
 
 # Process install
 function process() {
-  local brew_php_linked debug extra line
+  local brew_php_linked debug extra line pecl_pkg
 
   debug="$([[ ! -z "$DEBUG" ]] && echo echo)"
 
@@ -106,15 +106,45 @@ function process() {
         line="$(egrep "^$line[ ]*.*$" <(clean <(get_pkgs "$1")))"
         $debug brew install $line;;
       'brew php')
-        line="$(egrep "^$line[ ]*.*$" <(clean <(get_pkgs "$1")))"
-        brew_php_linked="$(qte cd /usr/local/var/homebrew/linked && qte ls -d php[57][0-9])"
+        brew_php_linked="$(qte cd /usr/local/var/homebrew/linked && qte ls -d php php@[57].[0-9]*)"
         if [[ ! -z "$brew_php_linked" ]]; then
           if [[ "$line" != "$brew_php_linked"* ]]; then
             brew unlink "$brew_php_linked"
-            qte brew list "${line:0:5}" && brew link "${line:0:5}"
+            qte brew list "${line:0:6}" && brew link --overwrite --force "${line:0:6}"
           fi
         fi
-        $debug brew install $line;;
+        $debug brew install $line
+        show_status "PECLs for: $line"
+
+        # brew rm $(brew list | egrep -e '^php$' -e '^php@') && rm -rf /usr/local/lib/php/pecl/ /usr/local/share/pear/
+
+        # This inner loop to install pecl packages for specific php versions'
+        # only run when the brew install for the specific version's run, i.e.,
+        # pecl installation's not separate/standalone, currently.
+        while read -r -u4 pecl_pkg; do
+          if pecl_pkg="$(sed 's/#.*$//' <<< "$pecl_pkg")" && [[ ! -z "$pecl_pkg" ]]; then
+            # This entire block is to accommodate php@5.6 :/
+            if [[ "$line" =~ @ ]] && [[ "$pecl_pkg" =~ $line ]]; then
+              # TODO: refine this for multiple versions
+              pecl_pkg="$(sed "s/:$line//" <<< "$pecl_pkg")"
+            else
+              pecl_pkg="$(sed 's/:.*$//' <<< "$pecl_pkg")"
+
+              # The /usr/local/opt/$line symlink is only available when the packaged is linked
+              export MACOSX_DEPLOYMENT_TARGET="$(sw_vers -productVersion | egrep -o '^[0-9]+\.[0-9]+')"
+              export CFLAGS='-fgnu89-inline'
+              export LDFLAGS='-fgnu89-inline'
+              export CXXFLAGS='-fgnu89-inline'
+            fi
+
+            # We're not checking to see if it's already installed
+            show_status "Installing PECL: $pecl_pkg"
+            $debug "/usr/local/opt/$line/bin/pecl" channel-update pecl.php.net
+            yes '' | $debug "/usr/local/opt/$line/bin/pecl" install "$pecl_pkg"
+          fi
+        done 4< <(get_pkgs "pecl")
+        # find /usr/local/opt/php*/pecl/ -type f | sort
+        ;;
       npm)
         SUDO=
         $debug $SUDO npm install -g $line;;
@@ -277,6 +307,17 @@ else
   # There was a major(?) architecture change to homebrew around 2015-12(?)
   if ! brew --version | qt grep "Homebrew [>]*[^0]"; then
     die "Hmm... Old version of brew detected. You may want to run: brew update; brew upgrade; and re-run this script when done" 127
+  fi
+
+  # https://brew.sh/2018/01/19/homebrew-1.5.0/
+  currentBrewVersion="$(brew --version | grep -E -o ' [0-9]+\.[0-9]+')"
+
+  if [[ "$(echo -e "$currentBrewVersion\\n 1.4" | sort -r | head -1)" = ' 1.4' ]]; then
+    errcho "In brew version 1.5 (http://bit.ly/2q9wcoI / http://bit.ly/2qcXiem) the php tap has been archived."
+    die "This script will no longer support the older version" 127
+    # brew list | egrep -e '^php[57]' > /dev/null && brew rm $(brew list | egrep -e '^php[57]')
+    # brew tap  | egrep homebrew/php  > /dev/null && brew untap homebrew/php
+    # find /usr/local/etc/php -name ext-mcrypt.ini -delete
   fi
 fi
 
@@ -748,16 +789,16 @@ qt popd
 
 while read -r -u3 service the_rest && [[ ! -z "$service" ]]; do
   qte brew services stop "$service"
-done 3< <(brew services list | egrep '^php[57]' | grep ' started ')
+done 3< <(brew services list | egrep -e '^php ' -e '^php@[57]' | grep ' started ')
 
-# Make php56 the default
+# Make php@5.6 the default
 [[ ! -d /usr/local/var/log/ ]] && mkdir -p /usr/local/var/log/
-brew services start php56
+brew services start php@5.6
 
-brew_php_linked="$(qte cd /usr/local/var/homebrew/linked && qte ls -d php[57][0-9])"
+brew_php_linked="$(qte cd /usr/local/var/homebrew/linked && qte ls -d php php@[57].[0-9]*)"
 # Only link if brew php is not linked. If it is, we assume it was intentionally done
 if [[ -z "$brew_php_linked" ]]; then
-  brew link --overwrite php56
+  brew link --overwrite --force php@5.6
 fi
 
 # Some "upgrades" from (Mountain Lion / Mavericks) Apache 2.2 to 2.4, seems to
@@ -880,7 +921,6 @@ exit
 # .data
 # -----------------------------------------------------------------------------
 # Start: brew tap
-homebrew/php
 homebrew/services
 # End: brew tap
 # -----------------------------------------------------------------------------
@@ -910,22 +950,25 @@ vlc
 # This is dumb. Drush has a dependency on brew php, and composer but won't
 # install them automatically. This entire script depends on 'sort -u' to
 # determine what needs to be installed... so, creating php.
-php56
-php56-memcached
-php56-mcrypt
-php56-opcache
-php56-xdebug
-php70
-php70-memcached
-php70-mcrypt
-php70-opcache
-php70-xdebug
-php71
-php71-memcached
-php71-mcrypt
-php71-opcache
-php71-xdebug
+# Php 7.2 dropped mcrypt support. Previous versions now have it built in: php -m | grep mcrypt
+# php
+php@5.6
+php@7.0
+php@7.1
 # End: brew php
+# -----------------------------------------------------------------------------
+# Start: pecl
+# some_module:php@5.6-1.2.3:php@7.1-2.3.4
+#   if      php@5.6 then use some_module-1.2.3
+#   else if php@7.1 then use some_module-2.3.4
+#   else use current version of some_module
+#   end if
+igbinary
+imagick
+memcached:php@5.6-2.2.0
+opcache
+xdebug:php@5.6-2.5.5
+# End: pecl
 # -----------------------------------------------------------------------------
 # Start: brew leaves
 # Development Envs
