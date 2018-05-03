@@ -515,6 +515,8 @@ fi
 # -- SETUP APACHE -------------------------------------------------------------
 echo "== Processing Apache =="
 
+HTTPD_CONF="$BREW_PREFIX/etc/httpd/httpd.conf"
+
 show_status 'Updating httpd.conf settings'
 for i in \
   'LoadModule socache_shmcb_module ' \
@@ -526,12 +528,12 @@ for i in \
   'LoadModule proxy_fcgi_module ' \
   'LoadModule proxy_module ' \
 ; do
-  sed -i.bak "s;#.*${i}\\(.*\\);${i}\\1;" "$BREW_PREFIX/etc/httpd/httpd.conf"
+  sed -i.bak "s;#.*${i}\\(.*\\);${i}\\1;" "$HTTPD_CONF"
 done
 
-sed -i.bak "s;^Listen 80.*$;Listen 80;"     "$BREW_PREFIX/etc/httpd/httpd.conf"
-sed -i.bak "s;^User .*$;User $USER;"        "$BREW_PREFIX/etc/httpd/httpd.conf"
-sed -i.bak "s;^Group .*$;Group $(id -gn);"  "$BREW_PREFIX/etc/httpd/httpd.conf"
+sed -i.bak "s;^Listen 80.*$;Listen 80;"     "$HTTPD_CONF"
+sed -i.bak "s;^User .*$;User $USER;"        "$HTTPD_CONF"
+sed -i.bak "s;^Group .*$;Group $(id -gn);"  "$HTTPD_CONF"
 
 DEST_DIR="/Users/$USER/Sites"
 
@@ -584,7 +586,7 @@ if [[ ! -f "$BREW_PREFIX/etc/httpd/extra/localhost.conf" ]] || ! qt grep "$PHP_F
     DirectoryIndex index.html index.php
   </IfModule>
 
-  # Depends on: 'LoadModule proxy_fcgi_module lib/httpd/modules/mod_proxy_fcgi.so' in $BREW_PREFIX/etc/httpd/httpd.conf
+  # Depends on: 'LoadModule proxy_fcgi_module lib/httpd/modules/mod_proxy_fcgi.so' in $HTTPD_CONF
   #   http://serverfault.com/a/672969
   #   https://httpd.apache.org/docs/2.4/mod/mod_proxy_fcgi.html
   # This is to forward all PHP to php-fpm.
@@ -628,7 +630,7 @@ Listen 443
     DirectoryIndex index.html index.php
   </IfModule>
 
-  # Depends on: 'LoadModule proxy_fcgi_module lib/httpd/modules/mod_proxy_fcgi.so' in $BREW_PREFIX/etc/httpd/httpd.conf
+  # Depends on: 'LoadModule proxy_fcgi_module lib/httpd/modules/mod_proxy_fcgi.so' in $HTTPD_CONF
   #   http://serverfault.com/a/672969
   #   https://httpd.apache.org/docs/2.4/mod/mod_proxy_fcgi.html
   # This is to forward all PHP to php-fpm.
@@ -649,8 +651,8 @@ Listen 443
 </VirtualHost>
 EOT
 
-  if ! qt grep '^# Local vhost and ssl, for \*.localhost$' "$BREW_PREFIX/etc/httpd/httpd.conf"; then
-    cat <<EOT | qt tee -a "$BREW_PREFIX/etc/httpd/httpd.conf"
+  if ! qt grep '^# Local vhost and ssl, for \*.localhost$' "$HTTPD_CONF"; then
+    cat <<EOT | qt tee -a "$HTTPD_CONF"
 
 # Local vhost and ssl, for *.localhost
 Include $BREW_PREFIX/etc/httpd/extra/localhost.conf
@@ -667,8 +669,8 @@ else
   fi
 fi
 
-if ! qt grep '^# To avoid: Gateway Timeout, during xdebug session (analogous changes made to the php.ini files)$' "$BREW_PREFIX/etc/httpd/httpd.conf"; then
-  cat <<EOT | qt tee -a "$BREW_PREFIX/etc/httpd/httpd.conf"
+if ! qt grep '^# To avoid: Gateway Timeout, during xdebug session (analogous changes made to the php.ini files)$' "$HTTPD_CONF"; then
+  cat <<EOT | qt tee -a "$HTTPD_CONF"
 
 # To avoid: Gateway Timeout, during xdebug session (analogous changes made to the php.ini files)
 Timeout 1800
@@ -676,13 +678,13 @@ EOT
 fi
 
 # Have ServerName match CN in SSL Cert
-sed -i.bak 's/#ServerName www.example.com:80/ServerName 127.0.0.1/' "$BREW_PREFIX/etc/httpd/httpd.conf"
-if qt diff "$BREW_PREFIX/etc/httpd/httpd.conf" "$BREW_PREFIX/etc/httpd/httpd.conf.bak"; then
-  echo "No change made to: apache2/etc/httpd.conf"
+sed -i.bak 's/#ServerName www.example.com:80/ServerName 127.0.0.1/' "$HTTPD_CONF"
+if qt diff "$HTTPD_CONF" "${HTTPD_CONF}.bak"; then
+  echo "No change made to: apache2/httpd.conf"
 else
   etc_git_commit "git add httpd/httpd.conf" "Update httpd/httpd.conf"
 fi
-rm "$BREW_PREFIX/etc/httpd/httpd.conf.bak"
+rm "${HTTPD_CONF}.bak"
 
 # https://clickontyler.com/support/a/38/how-start-apache-automatically/
 
