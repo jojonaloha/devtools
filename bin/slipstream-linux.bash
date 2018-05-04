@@ -47,6 +47,7 @@ pkg_manager=""
 if [[ $OSTYPE == linux-gnu* ]]; then
   [[ -z "$pkg_manager" ]] && pkg_manager="$(basename "$(command -v apt-get)")"
   [[ -z "$pkg_manager" ]] && pkg_manager="$(basename "$(command -v pacman)")"
+  [[ -z "$pkg_manager" ]] && pkg_manager="$(basename "$(command -v yum)")"
 
   if [[ -z "$pkg_manager" ]]; then
     cat <<EOT
@@ -59,6 +60,10 @@ Sorry! This script is currently only compatible with:
   pacman based distributions, tested on:
 
     Manjaro
+
+  yum based distributions, tested on:
+
+    Fedora
 
 You're running:
 
@@ -74,7 +79,7 @@ EOT
     exit 127
   fi
 else
-  die "Oops! This script was only meant for Ubuntu/Arch" 127
+  die "Oops! This script is not compatibile or test for your OS" 127
 fi
 # -- HELPER FUNCTIONS, PT. 2 --------------------------------------------------
 # Parse out .data sections of this file
@@ -111,6 +116,8 @@ function process() {
         $debug sudo apt-get install -y "${line[@]}";;
       'pacman')
         $debug sudo pacman -S --noconfirm "${line[@]}";;
+      'yum')
+        $debug sudo yum -y install "${line[@]}";;
       'brew tap')
         $debug brew tap "${line[@]}";;
       'brew leaves')
@@ -202,6 +209,8 @@ function get_installed() {
       qte apt list --installed | sed 's;/.*$;;' | sort -u;;
     'pacman')
       qte pacman -Qn | sed 's/ .*$//' | sort -u;;
+    'yum')
+      qte yum list installed | sed 's/\..*$//' | sort -u;;
     'brew tap')
       brew tap | sort -u;;
     'brew leaves'|'brew php')
@@ -301,6 +310,9 @@ if [[ ! -d /etc/.git ]]; then
   elif [[ "$pkg_manager" = "pacman" ]]; then
     sudo pacman -Syy --noconfirm # The -Syu seems to do entire system upgrade
     sudo pacman -S --noconfirm etckeeper
+    sudo etckeeper init
+  elif [[ "$pkg_manager" = "yum" ]]; then
+    sudo yum -y install etckeeper
     sudo etckeeper init
   fi
 
@@ -910,6 +922,12 @@ libsasl2-dev
 systemtap-sdt-dev
 zlib1g-dev
 # End: apt-get
+# -----------------------------------------------------------------------------
+# Start: yum
+dnsmasq
+java-1.8.0-openjdk
+sshuttle
+# End: yum
 # -----------------------------------------------------------------------------
 # Start: pacman
 dnsmasq
