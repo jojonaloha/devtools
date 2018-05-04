@@ -916,6 +916,7 @@ zlib1g-dev
 # Start: pacman
 dnsmasq
 git
+jdk9-openjdk
 sshuttle
 # End: pacman
 # -----------------------------------------------------------------------------
