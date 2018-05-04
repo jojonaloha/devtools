@@ -899,6 +899,7 @@ exit
 # Start: apt-get
 build-essential
 curl
+default-jdk
 dnsmasq
 git
 sshuttle
