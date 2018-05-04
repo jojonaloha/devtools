@@ -170,7 +170,7 @@ function process() {
             fi
 
             show_status "PECL: Installing: $pecl_pkg"
-            "$BREW_PREFIX/opt/$line/bin/pecl" install "$pecl_pkg" <<< '' > /dev/null
+            qt "$BREW_PREFIX/opt/$line/bin/pecl" install "$pecl_pkg" <<< ''
           fi
         done 4< <(get_pkgs "pecl")
 
