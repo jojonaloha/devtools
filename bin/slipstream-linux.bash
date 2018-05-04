@@ -52,14 +52,12 @@ if [[ $OSTYPE == linux-gnu* ]]; then
     cat <<EOT
 Sorry! This script is currently only compatible with:
 
-  apt-get based distributions like:
+  apt-get based distributions, tested on:
 
-    Debian
-    Ubuntu
+    Xubuntu
 
-  pacman based distributions like:
+  pacman based distributions, tested on:
 
-    Arch Linux
     Manjaro
 
 You're running:
@@ -969,12 +967,10 @@ capistrano -v 2.15.5
 # End: gem
 # -----------------------------------------------------------------------------
 # Start: npm
-bower
 csslint
 fixmyjs
 grunt-cli
 js-beautify
 jshint
-yo
 # End: npm
 # -----------------------------------------------------------------------------
