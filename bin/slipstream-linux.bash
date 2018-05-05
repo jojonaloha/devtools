@@ -931,6 +931,7 @@ sshuttle
 # -----------------------------------------------------------------------------
 # Start: pacman
 dnsmasq
+dnsutils
 git
 jdk9-openjdk
 sshuttle
