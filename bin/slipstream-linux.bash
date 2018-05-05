@@ -702,14 +702,31 @@ rm "${HTTPD_CONF}.bak"
 # -- WILDCARD DNS -------------------------------------------------------------
 echo "== Processing Dnsmasq =="
 
-conffile="/etc/dnsmasq.conf"
+conffile="/etc/NetworkManager/dnsmasq.d/10-slipstream.conf"
 if [[ ! -f "$conffile" ]] || ! qt grep -E '^address=/.localhost/127.0.0.1$' "$conffile"; then
   show_status "Updating: $conffile"
+  [[ ! -d "${conffile%/*}" ]] && sudo mkdir -p "${conffile%/*}"
   cat <<EOT | qt sudo tee -a "$conffile"
 address=/.localhost/127.0.0.1
 EOT
 
-  sudo etckeeper commit -m "[Slipstream] Updating dnsmasq files"
+  sudo etckeeper commit -m "[Slipstream] Updating $conffile"
+  qt sudo systemctl restart dnsmasq
+fi
+
+conffile="/etc/NetworkManager/NetworkManager.conf"
+# TODO: should really test for "[main]" and "dns=dnsmasq"
+if [[ ! -f "$conffile" ]] || ! qt grep -E -e '^dns=dnsmasq$' "$conffile"; then
+  show_status "Updating: $conffile"
+  [[ ! -d "${conffile%/*}" ]] && sudo mkdir -p "${conffile%/*}"
+  cat <<EOT | qt sudo tee -a "$conffile"
+[main]
+dns=dnsmasq
+EOT
+
+  sudo etckeeper commit -m "[Slipstream] Updating $conffile"
+  qt sudo systemctl restart dnsmasq
+  qt sudo systemctl restart NetworkManager
 fi
 
 if ! qt grep -i dnsmasq /etc/hosts; then
@@ -910,7 +927,6 @@ exit
 build-essential
 curl
 default-jdk
-dnsmasq
 git
 sshuttle
 # For linuxbrew php
