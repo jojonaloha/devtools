@@ -952,6 +952,8 @@ dnsutils
 git
 jdk9-openjdk
 sshuttle
+# For linuxbrew php
+libmemcached
 # End: pacman
 # -----------------------------------------------------------------------------
 # Start: brew tap
@@ -975,7 +977,6 @@ php@7.1
 igbinary
 imagick
 memcached:php@5.6-2.2.0
-opcache
 xdebug:php@5.6-2.5.5
 # End: pecl
 # -----------------------------------------------------------------------------
