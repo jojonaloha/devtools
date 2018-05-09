@@ -488,7 +488,7 @@ echo "== Processing MariaDB =="
 [[ ! -d "$BREW_PREFIX/etc/my.cnf.d" ]] && sudo mkdir -p "$BREW_PREFIX/etc/my.cnf.d"
 if [[ ! -f "$BREW_PREFIX/etc/my.cnf.d/mysqld_innodb.cnf" ]]; then
   show_status "Creating: $BREW_PREFIX/etc/my.cnf.d/mysqld_innodb.cnf"
-  cat <<EOT | qt sudo tee "$BREW_PREFIX/etc/my.cnf.d/mysqld_innodb.cnf"
+  cat <<EOT > "$BREW_PREFIX/etc/my.cnf.d/mysqld_innodb.cnf"
 [mysqld]
 innodb_file_per_table = 1
 socket = /tmp/mysql.sock
@@ -522,7 +522,7 @@ if ! qt mysql.server status; then
   (qt mysql.server start &)
   show_status 'Setting mysql root password... waiting for mysqld to start'
   # Just sleep, waiting for mariadb to start
-  sleep 10
+  sleep 7
   mysql -u root mysql <<< "SET SQL_SAFE_UPDATES = 0; UPDATE user SET password=PASSWORD('root') WHERE User='root'; FLUSH PRIVILEGES; SET SQL_SAFE_UPDATES = 1;"
 fi
 # -- SETUP APACHE -------------------------------------------------------------
@@ -579,7 +579,7 @@ PHP_FPM_PROXY="fcgi://localhost/"
 [[ ! -d "$BREW_PREFIX/var/run" ]] && mkdir -p "$BREW_PREFIX/var/run"
 
 if [[ ! -f "$BREW_PREFIX/etc/httpd/extra/localhost.conf" ]] || ! qt grep "$PHP_FPM_HANDLER" "$BREW_PREFIX/etc/httpd/extra/localhost.conf" || ! qt grep \\.localhost\\.metaltoad-sites\\.com "$BREW_PREFIX/etc/httpd/extra/localhost.conf" || ! qt grep \\.xip\\.io "$BREW_PREFIX/etc/httpd/extra/localhost.conf"; then
-  cat <<EOT | qt tee "$BREW_PREFIX/etc/httpd/extra/localhost.conf"
+  cat <<EOT > "$BREW_PREFIX/etc/httpd/extra/localhost.conf"
 <VirtualHost *:80>
   ServerAdmin $USER@localhost
   ServerAlias *.localhost *.vmlocalhost *.localhost.metaltoad-sites.com *.xip.io
@@ -665,7 +665,7 @@ Listen 443
 EOT
 
   if ! qt grep '^# Local vhost and ssl, for \*.localhost$' "$HTTPD_CONF"; then
-    cat <<EOT | qt tee -a "$HTTPD_CONF"
+    cat <<EOT >> "$HTTPD_CONF"
 
 # Local vhost and ssl, for *.localhost
 Include $BREW_PREFIX/etc/httpd/extra/localhost.conf
@@ -683,7 +683,7 @@ else
 fi
 
 if ! qt grep '^# To avoid: Gateway Timeout, during xdebug session (analogous changes made to the php.ini files)$' "$HTTPD_CONF"; then
-  cat <<EOT | qt tee -a "$HTTPD_CONF"
+  cat <<EOT >> "$HTTPD_CONF"
 
 # To avoid: Gateway Timeout, during xdebug session (analogous changes made to the php.ini files)
 Timeout 1800
