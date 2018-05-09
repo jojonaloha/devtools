@@ -368,6 +368,9 @@ fi
 BREW_PREFIX="$(brew --prefix)"
 export BREW_PREFIX
 
+show_status "Ensure brew gcc is installed"
+qt brew list gcc || brew install gcc
+
 [[ ! -d "$BREW_PREFIX/etc" ]] && mkdir -p "$BREW_PREFIX/etc"
 if [[ ! -d "$BREW_PREFIX/etc/.git" ]]; then
   show_status "Git init-ing $BREW_PREFIX/etc"
