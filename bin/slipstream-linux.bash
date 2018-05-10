@@ -517,8 +517,7 @@ key_buffer_size = 256M
 EOT
 fi
 
-# TOOO: ps aux | grep mariadb and prehaps use nc to test if port is open
-# brew info mariadb
+# Start MariaDB
 if ! qt mysql.server status; then
   (qt mysql.server start &)
   show_status 'Setting mysql root password... waiting for mysqld to start'
@@ -699,9 +698,6 @@ else
   etc_git_commit "git add httpd/httpd.conf" "Update httpd/httpd.conf"
 fi
 rm "${HTTPD_CONF}.bak"
-
-# https://clickontyler.com/support/a/38/how-start-apache-automatically/
-
 # TODO: automatically start apache
 # -- WILDCARD DNS -------------------------------------------------------------
 echo "== Processing Dnsmasq =="
