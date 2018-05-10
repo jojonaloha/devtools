@@ -483,9 +483,7 @@ qt popd
 # -- INSTALL MARIADB (MYSQL) --------------------------------------------------
 echo "== Processing MariaDB =="
 
-# brew info mariadb
 # TODO: figure out how to start automatically
-
 [[ ! -d "$BREW_PREFIX/etc/my.cnf.d" ]] && sudo mkdir -p "$BREW_PREFIX/etc/my.cnf.d"
 if [[ ! -f "$BREW_PREFIX/etc/my.cnf.d/mysqld_innodb.cnf" ]]; then
   show_status "Creating: $BREW_PREFIX/etc/my.cnf.d/mysqld_innodb.cnf"
