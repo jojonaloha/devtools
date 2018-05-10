@@ -59,6 +59,7 @@ Sorry! This script is currently only compatible with:
 
   pacman based distributions, tested on:
 
+    Antergos
     Manjaro
 
   yum based distributions, tested on:
