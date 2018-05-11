@@ -287,8 +287,9 @@ If you wish to continue, then this is what I'll be doing:
   - Git-ifying your /etc folder with etckeeper
   - Allow for password-less sudo by adding /etc/sudoers.d/10-local-users
   - Install linux brew, and some brew packages
-  - Install Ruby if necessary (via 'rbenv/ruby-build') and install some gems
-  - Install NodeJs if necessary (via 'n') some npm packages
+  - Install Python  (via 'pyenv')             and install some pips
+  - Install Ruby    (via 'rbenv/ruby-build')  and install some gems
+  - Install NodeJs  (via 'n/n-install')       and install some npm packages
   -- Configure:
     - Postfix (Disable outgoing mail)
     - MariaDB (InnoDB tweaks, etc.)
@@ -409,26 +410,32 @@ process "brew php"
 
 show_status "brew leaves"
 process "brew leaves"
-# -- UPDATE AND INSTALL GEMS --------------------------------------------------
+# -- INSTALL PYTHON / PIPS ----------------------------------------------------
+echo "== Processing Pip =="
+
+if [[ ! -x "$HOME/.pyenv/shims/python" ]]; then
+  export PATH="$PATH:$HOME/.pyenv/shims"
+  qt hash
+  eval "$(pyenv init -)"
+  # Latest stable version
+  pyenv install 2.7.15
+  pyenv global 2.7.15
+  qt hash
+fi
+
+show_status "pip"
+process "pip"
+# -- INSTALL RUBY / GEMS ------------------------------------------------------
 echo "== Processing Gem =="
 
-if ! qt command -v ruby; then
-  # https://github.com/rbenv/rbenv
-  [[ ! -d "$HOME/.rbenv" ]] && git clone https://github.com/rbenv/rbenv.git "$HOME/.rbenv"
-  export PATH="$PATH:$HOME/.rbenv/bin"
+if [[ ! -x "$HOME/.rbenv/shims/ruby" ]]; then
+  export PATH="$PATH:$HOME/.rbenv/shims"
   qt hash
   eval "$(rbenv init -)"
-
-  # https://github.com/rbenv/ruby-build#readme
-  #   As an rbenv plugin
-  [[ ! -d "$(rbenv root)"/plugins ]] && mkdir -p "$(rbenv root)"/plugins
-  [[ ! -d "$(rbenv root)"/plugins/ruby-build ]] && git clone https://github.com/rbenv/ruby-build.git "$(rbenv root)"/plugins/ruby-build
-  if ! qt command -v ruby; then
-    # Latest stable version
-    rbenv install 2.5.1
-    rbenv global 2.5.1
-    qt hash
-  fi
+  # Latest stable version
+  rbenv install 2.5.1
+  rbenv global 2.5.1
+  qt hash
 fi
 
 show_status "gem"
@@ -436,7 +443,7 @@ process "gem"
 # -- INSTALL NPM PACKAGES -----------------------------------------------------
 echo "== Processing Npm =="
 
-if ! qt command -v node; then
+if [[ ! -x "$HOME/n/bin/node" ]]; then
   # https://github.com/mklement0/n-install
   curl -L https://git.io/n-install | bash -s -- -y
   export PATH="$HOME/n/bin:$PATH"
@@ -982,6 +989,8 @@ xdebug:php@5.6-2.5.5
 # -----------------------------------------------------------------------------
 # Start: brew leaves
 # Development Envs
+pyenv
+rbenv
 # Database
 mariadb
 # Network
@@ -996,6 +1005,9 @@ pngcrush
 the_silver_searcher
 wp-cli
 # End: brew leaves
+# -----------------------------------------------------------------------------
+# Start: pip
+# End: pip
 # -----------------------------------------------------------------------------
 # Start: gem
 bundler
