@@ -184,9 +184,6 @@ function process() {
             qt "$BREW_PREFIX/opt/$line/bin/pecl" install "$pecl_pkg" <<< ''
           fi
         done 4< <(get_pkgs "pecl")
-
-        # Pin them since they take a loooong time to compile
-        $debug brew pin "$line"
         ;;
       npm)
         SUDO=
@@ -238,18 +235,6 @@ function get_diff() {
 # Colorized output status
 function show_status() {
   echo "$(tput setaf 3)Working on: $(tput setaf 5)${*}$(tput sgr0)"
-}
-
-# Git commit /etc changes via sudo
-function etc_git_commit() {
-  local msg
-
-  msg="$2"
-  show_status 'Committing to git'
-  qt pushd "$BREW_PREFIX/etc"
-  $1
-  git commit -m "[Slipstream] $msg"
-  qt popd
 }
 
 # Generate self-signed SSL
@@ -378,14 +363,6 @@ export BREW_PREFIX
 show_status "Ensure brew gcc is installed"
 qt brew list gcc || brew install gcc
 
-[[ ! -d "$BREW_PREFIX/etc" ]] && mkdir -p "$BREW_PREFIX/etc"
-if [[ ! -d "$BREW_PREFIX/etc/.git" ]]; then
-  show_status "Git init-ing $BREW_PREFIX/etc"
-
-  etc_git_commit "git init"
-  etc_git_commit "git add ." "Initial commit"
-fi
-
 show_status "brew tap"
 process "brew tap"
 
@@ -505,7 +482,7 @@ fi
 # Start MariaDB
 if ! qt mysql.server status; then
   (qt mysql.server start &)
-  show_status 'Setting mysql root password... waiting for mysqld to start'
+  show_status "Setting mysql root password... waiting for mysqld to start"
   # Just sleep, waiting for mariadb to start
   sleep 7
   mysql -u root mysql <<< "SET SQL_SAFE_UPDATES = 0; UPDATE user SET password=PASSWORD('root') WHERE User='root'; FLUSH PRIVILEGES; SET SQL_SAFE_UPDATES = 1;"
@@ -515,7 +492,7 @@ echo "== Processing Apache =="
 
 HTTPD_CONF="$BREW_PREFIX/etc/httpd/httpd.conf"
 
-show_status 'Updating httpd.conf settings'
+show_status "Updating httpd.conf settings"
 for i in \
   'LoadModule socache_shmcb_module ' \
   'LoadModule ssl_module ' \
@@ -538,14 +515,14 @@ DEST_DIR="/Users/$USER/Sites"
 [[ ! -d "$DEST_DIR" ]] && mkdir -p "$DEST_DIR"
 
 if [[ ! -d "$BREW_PREFIX/etc/httpd/ssl" ]]; then
+  show_status "Add httpd/ssl files"
+
   mkdir -p "$$/ssl"
   qt pushd "$$/ssl"
   genssl
   qt popd
   mv "$$/ssl" "$BREW_PREFIX/etc/httpd"
   rmdir "$$"
-
-  etc_git_commit "git add httpd/ssl" "Add httpd/ssl files"
 fi
 
 # Set a default value, if not set as an env
@@ -567,20 +544,18 @@ if [[ ! -f "$BREW_PREFIX/etc/httpd/extra/localhost.conf" ]] || ! qt grep "$PHP_F
   get_conf "localhost.conf" > "$BREW_PREFIX/etc/httpd/extra/localhost.conf"
 
   if ! qt grep '^# Local vhost and ssl, for \*.localhost$' "$HTTPD_CONF"; then
+    show_status "Add httpd/extra/localhost.conf"
     cat <<EOT >> "$HTTPD_CONF"
 
 # Local vhost and ssl, for *.localhost
 Include $BREW_PREFIX/etc/httpd/extra/localhost.conf
 EOT
   fi
-
-  etc_git_commit "git add httpd/extra/localhost.conf" "Add httpd/extra/localhost.conf"
 else
   if qt grep ' ProxySet connectiontimeout=5 timeout=240$' "$BREW_PREFIX/etc/httpd/extra/localhost.conf"; then
+    show_status "Update httpd/extra/localhost.conf ProxySet timeout value to 1800"
     sed -i.bak 's/ ProxySet connectiontimeout=5 timeout=240/ ProxySet connectiontimeout=5 timeout=1800/' "$BREW_PREFIX/etc/httpd/extra/localhost.conf"
     rm "$BREW_PREFIX/etc/httpd/extra/localhost.conf.bak"
-
-    etc_git_commit "git add httpd/extra/localhost.conf" "Update httpd/extra/localhost.conf ProxySet timeout value to 1800"
   fi
 fi
 
@@ -594,11 +569,6 @@ fi
 
 # Have ServerName match CN in SSL Cert
 sed -i.bak 's/#ServerName www.example.com:80/ServerName 127.0.0.1/' "$HTTPD_CONF"
-if qt diff "$HTTPD_CONF" "${HTTPD_CONF}.bak"; then
-  echo "No change made to: apache2/httpd.conf"
-else
-  etc_git_commit "git add httpd/httpd.conf" "Update httpd/httpd.conf"
-fi
 rm "${HTTPD_CONF}.bak"
 # TODO: automatically start apache
 # -- WILDCARD DNS -------------------------------------------------------------
@@ -713,7 +683,7 @@ fi
 sudo "$(brew --prefix)"/bin/apachectl -k restart
 sleep 3
 # -- SETUP ADMINER ------------------------------------------------------------
-show_status 'Setting up adminer'
+show_status "Setting up adminer"
 [[ -d   "$DEST_DIR/adminer/webroot" ]] && mkdir -p  "$DEST_DIR/adminer/webroot"
 [[ ! -w "$DEST_DIR/adminer/webroot" ]] && chmod u+w "$DEST_DIR/adminer/webroot"
 latest="$(curl -IkLs https://github.com/vrana/adminer/releases/latest | col -b | grep Location | grep -E -o '[^/]+$')"
@@ -721,7 +691,7 @@ latest="$(curl -IkLs https://github.com/vrana/adminer/releases/latest | col -b |
 if [[ -e "$DEST_DIR/adminer/webroot/index.php" ]]; then
   if [[ "$(grep '\* @version' "$DEST_DIR/adminer/webroot/index.php" | grep -E -o '[0-9]+.*')" != "${latest/v/}" ]]; then
     rm -f  "$DEST_DIR/adminer/webroot/index.php"
-    show_status 'Updating adminer to latest version'
+    show_status "Updating adminer to latest version"
     curl -L -o "$DEST_DIR/adminer/webroot/index.php" "https://github.com/vrana/adminer/releases/download/$latest/adminer-${latest/v/}-en.php"
   fi
 else
