@@ -391,29 +391,15 @@ qt popd
 # -- INSTALL MARIADB (MYSQL) --------------------------------------------------
 echo "== Processing MariaDB =="
 
-# brew info mariadb
-[[ ! -d ~/Library/LaunchAgents ]] && mkdir -p  ~/Library/LaunchAgents
-if qt ls "$BREW_PREFIX/opt/mariadb/"*.plist && ! qt ls ~/Library/LaunchAgents/homebrew.mxcl.mariadb.plist; then
-  show_status "Linking MariaDB LaunchAgent plist"
-  ln -sfv "$BREW_PREFIX/opt/mariadb/"*.plist ~/Library/LaunchAgents/homebrew.mxcl.mariadb.plist
+[[ ! -d "$BREW_PREFIX/etc/my.cnf.d" ]] && sudo mkdir -p "$BREW_PREFIX/etc/my.cnf.d"
+if [[ ! -f "$BREW_PREFIX/etc/my.cnf.d/mysqld_innodb.cnf" ]]; then
+  show_status           "Creating: $BREW_PREFIX/etc/my.cnf.d/mysqld_innodb.cnf"
+  get_conf "mysqld_innodb.cnf" >  "$BREW_PREFIX/etc/my.cnf.d/mysqld_innodb.cnf"
 fi
 
-[[ ! -d /etc/homebrew/etc/my.cnf.d ]] && sudo mkdir -p /etc/homebrew/etc/my.cnf.d
-if [[ ! -f /etc/homebrew/etc/my.cnf.d/mysqld_innodb.cnf ]]; then
-  show_status "Creating: /etc/homebrew/etc/my.cnf.d/mysqld_innodb.cnf"
-  get_conf "mysqld_innodb.cnf" | qt sudo tee /etc/homebrew/etc/my.cnf.d/mysqld_innodb.cnf
-
-  show_status "Linking to: $BREW_PREFIX/etc/my.cnf.d/mysqld_innodb.cnf"
-  ln -svf /etc/homebrew/etc/my.cnf.d/mysqld_innodb.cnf "$BREW_PREFIX/etc/my.cnf.d/mysqld_innodb.cnf"
-  etc_git_commit "git add homebrew" "Add homebrew/etc/my.cnf.d/mysqld_innodb.cnf"
-fi
-
-# TOOO: ps aux | grep mariadb and prehaps use nc to test if port is open
-# brew info mariadb
-if ! qt launchctl list homebrew.mxcl.mariadb; then
-  show_status "Loading: ~/Library/LaunchAgents/homebrew.mxcl.mariadb.plist"
-  launchctl load ~/Library/LaunchAgents/homebrew.mxcl.mariadb.plist
-
+# Start MariaDB
+if ! qt mysql.server status; then
+  brew services start mariadb
   show_status "Setting mysql root password... waiting for mysqld to start"
   # Just sleep, waiting for mariadb to start
   sleep 7
@@ -422,7 +408,15 @@ fi
 # -- SETUP APACHE -------------------------------------------------------------
 echo "== Processing Apache =="
 
-HTTPD_CONF="/etc/apache2/httpd.conf"
+# Neuter System Apache, and don't worry about and /etc/ droppings
+if qt  pgrep    -f "/usr/sbin/httpd"; then
+  sudo pkill -9 -f "/usr/sbin/httpd"
+
+  show_status "Unloading: /System/Library/LaunchDaemons/org.apache.httpd.plist"
+  sudo launchctl unload -w /System/Library/LaunchDaemons/org.apache.httpd.plist
+fi
+
+HTTPD_CONF="$BREW_PREFIX/etc/httpd/httpd.conf"
 
 show_status "Updating httpd.conf settings"
 for i in \
@@ -435,27 +429,26 @@ for i in \
   'LoadModule proxy_fcgi_module ' \
   'LoadModule proxy_module ' \
 ; do
-  sudo sed -i.bak "s;#.*${i}\\(.*\\);${i}\\1;"  "$HTTPD_CONF"
+  sed -i.bak "s;#.*${i}\\(.*\\);${i}\\1;" "$HTTPD_CONF"
 done
 
-sudo sed -i.bak "s;^Listen 80.*$;Listen 80;"    "$HTTPD_CONF"
-sudo sed -i.bak "s;^User .*$;User $USER;"       "$HTTPD_CONF"
-sudo sed -i.bak "s;^Group .*$;Group $(id -gn);" "$HTTPD_CONF"
+sed -i.bak "s;^Listen 80.*$;Listen 80;"     "$HTTPD_CONF"
+sed -i.bak "s;^User .*$;User $USER;"        "$HTTPD_CONF"
+sed -i.bak "s;^Group .*$;Group $(id -gn);"  "$HTTPD_CONF"
 
 DEST_DIR="/Users/$USER/Sites"
 
 [[ ! -d "$DEST_DIR" ]] && mkdir -p "$DEST_DIR"
 
-if [[ ! -d "/etc/apache2/ssl" ]]; then
+if [[ ! -d "$BREW_PREFIX/etc/httpd/ssl" ]]; then
+  show_status "Add httpd/ssl files"
+
   mkdir -p "$$/ssl"
   qt pushd "$$/ssl"
   genssl
   qt popd
-  sudo mv "$$/ssl" /etc/apache2
-  sudo chown -R root:wheel /etc/apache2/ssl
+  mv "$$/ssl" "$BREW_PREFIX/etc/httpd"
   rmdir "$$"
-
-  etc_git_commit "git add apache2/ssl" "Add apache2/ssl files"
 fi
 
 # Set a default value, if not set as an env
@@ -473,41 +466,27 @@ PHP_FPM_PROXY="fcgi://localhost/"
 
 [[ ! -d "$BREW_PREFIX/var/run" ]] && mkdir -p "$BREW_PREFIX/var/run"
 
-if [[ -f /etc/apache2/extra/dev.conf ]]; then
-  etc_git_commit "git rm apache2/extra/dev.conf" "Remove apache2/extra/dev.conf"
-fi
-
-if qt grep '^# Local vhost and ssl, for \*.dev$'                        "$HTTPD_CONF"; then
-  sudo sed -i.bak '/^# Local vhost and ssl, for \*.dev$/d'              "$HTTPD_CONF"
-  sudo sed -i.bak '/Include \/private\/etc\/apache2\/extra\/dev.conf/d' "$HTTPD_CONF"
-  sudo rm "${HTTPD_CONF}.bak"
-
-  etc_git_commit "git add $HTTPD_CONF" "Remove references to .dev from $HTTPD_CONF"
-fi
-
-if [[ ! -f /etc/apache2/extra/localhost.conf ]] || ! qt grep "$PHP_FPM_HANDLER" /etc/apache2/extra/localhost.conf || ! qt grep \\.localhost\\.metaltoad-sites\\.com /etc/apache2/extra/localhost.conf || ! qt grep \\.xip\\.io /etc/apache2/extra/localhost.conf; then
-  get_conf "localhost.conf" | qt sudo tee /etc/apache2/extra/localhost.conf
+if [[ ! -f "$BREW_PREFIX/etc/httpd/extra/localhost.conf" ]] || ! qt grep "$PHP_FPM_HANDLER" "$BREW_PREFIX/etc/httpd/extra/localhost.conf" || ! qt grep \\.localhost\\.metaltoad-sites\\.com "$BREW_PREFIX/etc/httpd/extra/localhost.conf" || ! qt grep \\.xip\\.io "$BREW_PREFIX/etc/httpd/extra/localhost.conf"; then
+  get_conf "localhost.conf" > "$BREW_PREFIX/etc/httpd/extra/localhost.conf"
 
   if ! qt grep '^# Local vhost and ssl, for \*.localhost$' "$HTTPD_CONF"; then
-    cat <<EOT | qt sudo tee -a "$HTTPD_CONF"
+    show_status "Add httpd/extra/localhost.conf"
+    cat <<EOT >> "$HTTPD_CONF"
 
 # Local vhost and ssl, for *.localhost
-Include /private/etc/apache2/extra/localhost.conf
+Include $BREW_PREFIX/etc/httpd/extra/localhost.conf
 EOT
   fi
-
-  etc_git_commit "git add apache2/extra/localhost.conf" "Add apache2/extra/localhost.conf"
 else
-  if qt grep ' ProxySet connectiontimeout=5 timeout=240$' /etc/apache2/extra/localhost.conf; then
-    sudo sed -i.bak 's/ ProxySet connectiontimeout=5 timeout=240/ ProxySet connectiontimeout=5 timeout=1800/' /etc/apache2/extra/localhost.conf
-    sudo rm /etc/apache2/extra/localhost.conf.bak
-
-    etc_git_commit "git add apache2/extra/localhost.conf" "Update apache2/extra/localhost.conf ProxySet timeout value to 1800"
+  if qt grep ' ProxySet connectiontimeout=5 timeout=240$' "$BREW_PREFIX/etc/httpd/extra/localhost.conf"; then
+    show_status "Update httpd/extra/localhost.conf ProxySet timeout value to 1800"
+    sed -i.bak 's/ ProxySet connectiontimeout=5 timeout=240/ ProxySet connectiontimeout=5 timeout=1800/' "$BREW_PREFIX/etc/httpd/extra/localhost.conf"
+    rm "$BREW_PREFIX/etc/httpd/extra/localhost.conf.bak"
   fi
 fi
 
 if ! qt grep '^# To avoid: Gateway Timeout, during xdebug session (analogous changes made to the php.ini files)$' "$HTTPD_CONF"; then
-  cat <<EOT | qt sudo tee -a "$HTTPD_CONF"
+  cat <<EOT >> "$HTTPD_CONF"
 
 # To avoid: Gateway Timeout, during xdebug session (analogous changes made to the php.ini files)
 Timeout 1800
@@ -515,20 +494,8 @@ EOT
 fi
 
 # Have ServerName match CN in SSL Cert
-sudo sed -i.bak 's/#ServerName www.example.com:80/ServerName 127.0.0.1/' "$HTTPD_CONF"
-if qt diff "$HTTPD_CONF" "${HTTPD_CONF}.bak"; then
-  echo "No change made to: apache2/httpd.conf"
-else
-  etc_git_commit "git add apache2/httpd.conf" "Update apache2/httpd.conf"
-fi
-sudo rm "${HTTPD_CONF}.bak"
-
-# https://clickontyler.com/support/a/38/how-start-apache-automatically/
-
-if ! qt sudo launchctl list org.apache.httpd; then
-  show_status "Loading: /System/Library/LaunchDaemons/org.apache.httpd.plist"
-  sudo launchctl load -w /System/Library/LaunchDaemons/org.apache.httpd.plist
-fi
+sed -i.bak 's/#ServerName www.example.com:80/ServerName 127.0.0.1/' "$HTTPD_CONF"
+rm "${HTTPD_CONF}.bak"
 # -- WILDCARD DNS -------------------------------------------------------------
 echo "== Processing Dnsmasq =="
 
@@ -652,28 +619,6 @@ for i in "$BREW_PREFIX/etc/php/"*/php.ini; do
   fi
 done
 
-if [[ -d /etc/homebrew/etc/apache2 ]]; then
-  show_status "Deleting homebrew/etc/apache2 for switch to php-fpm"
-  sudo rm -rf /etc/homebrew/etc/apache2
-  etc_git_commit "git rm -r homebrew/etc/apache2" "Deleting homebrew/etc/apache2 for switch to php-fpm"
-fi
-
-if [[ -d "$BREW_PREFIX/var/run/apache2" ]]; then
-  rm -rf "$BREW_PREFIX/var/run/apache2"
-fi
-
-# Account for both newly and previously provisioned scenarios
-sudo sed -i.bak "s;^\\(LoadModule[[:space:]]*php5_module[[:space:]]*libexec/apache2/libphp5.so\\);# \\1;"                         "$HTTPD_CONF"
-sudo sed -i.bak "s;^\\(LoadModule[[:space:]]*php5_module[[:space:]]*$BREW_PREFIX/opt/php56/libexec/apache2/libphp5.so\\);# \\1;"  "$HTTPD_CONF"
-sudo sed -i.bak "s;^\\(Include[[:space:]]\"*$BREW_PREFIX/var/run/apache2/php.conf\\);# \\1;"                                      "$HTTPD_CONF"
-sudo rm "${HTTPD_CONF}.bak"
-
-qt pushd /etc/
-if git status | qt grep -E 'apache2/httpd.conf'; then
-  etc_git_commit "git add apache2/httpd.conf" "Update apache2/httpd.conf to use brew php-fpm"
-fi
-qt popd
-
 while read -r -u3 service && [[ ! -z "$service" ]]; do
   qte brew services stop "$service"
 done 3< <(brew services list | grep -E -e '^php ' -e '^php@[57]' | grep ' started ' | cut -f1 -d' ')
@@ -688,20 +633,7 @@ if [[ -z "$brew_php_linked" ]]; then
   brew link --overwrite --force php@5.6
 fi
 
-# Some "upgrades" from (Mountain Lion / Mavericks) Apache 2.2 to 2.4, seems to
-# keep the 2.2 config files. The "LockFile" directive is an artifact of 2.2
-#   http://apple.stackexchange.com/questions/211015/el-capitan-apache-error-message-ah00526
-# This simple commenting out of the line seems to work just fine.
-sudo sed -i.bak 's;^\(LockFile\);# \1;' /etc/apache2/extra/httpd-mpm.conf
-sudo rm -f /etc/apache2/extra/httpd-mpm.conf.bak
-
-qt pushd /etc/
-if git status | qt grep 'apache2/extra/httpd-mpm.conf'; then
-  etc_git_commit "git add apache2/extra/httpd-mpm.conf" "Comment out LockFile in apache2/extra/httpd-mpm.conf"
-fi
-qt popd
-
-sudo apachectl -k restart
+#TODO: use brew services? sudo apachectl -k restart
 sleep 3
 # -- SETUP ADMINER ------------------------------------------------------------
 show_status "Setting up adminer"
@@ -761,6 +693,7 @@ vlc
 # -----------------------------------------------------------------------------
 # Start: brew php
 # Php 7.2 dropped mcrypt support. Previous versions now have it built in: php -m | grep mcrypt
+httpd
 php
 php@5.6
 php@7.0
@@ -903,7 +836,7 @@ cat <<EOT
     DirectoryIndex index.html index.php
   </IfModule>
 
-  # Depends on: "LoadModule proxy_fcgi_module libexec/apache2/mod_proxy_fcgi.so" in $HTTPD_CONF
+  # Depends on: "LoadModule proxy_fcgi_module lib/httpd/modules/mod_proxy_fcgi.so" in $HTTPD_CONF
   #   http://serverfault.com/a/672969
   #   https://httpd.apache.org/docs/2.4/mod/mod_proxy_fcgi.html
   # This is to forward all PHP to php-fpm.
@@ -930,8 +863,8 @@ Listen 443
   VirtualDocumentRoot $DEST_DIR/%1/webroot
 
   SSLEngine On
-  SSLCertificateFile    /private/etc/apache2/ssl/server.crt
-  SSLCertificateKeyFile /private/etc/apache2/ssl/server.key
+  SSLCertificateFile    $BREW_PREFIX/etc/httpd/ssl/server.crt
+  SSLCertificateKeyFile $BREW_PREFIX/etc/httpd/ssl/server.key
 
   UseCanonicalName Off
 
@@ -947,7 +880,7 @@ Listen 443
     DirectoryIndex index.html index.php
   </IfModule>
 
-  # Depends on: "LoadModule proxy_fcgi_module libexec/apache2/mod_proxy_fcgi.so" in $HTTPD_CONF
+  # Depends on: "LoadModule proxy_fcgi_module lib/httpd/modules/mod_proxy_fcgi.so" in $HTTPD_CONF
   #   http://serverfault.com/a/672969
   #   https://httpd.apache.org/docs/2.4/mod/mod_proxy_fcgi.html
   # This is to forward all PHP to php-fpm.
