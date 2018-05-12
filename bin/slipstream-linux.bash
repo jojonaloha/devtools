@@ -42,46 +42,6 @@ EOT
     die "Yikes! Please don't run this as root!" 127
   fi
 fi
-# -- CHECK OS VERSION ---------------------------------------------------------
-pkg_manager=""
-if [[ $OSTYPE == linux-gnu* ]]; then
-  [[ -z "$pkg_manager" ]] && pkg_manager="$(basename "$(command -v apt-get)")"
-  [[ -z "$pkg_manager" ]] && pkg_manager="$(basename "$(command -v pacman)")"
-  [[ -z "$pkg_manager" ]] && pkg_manager="$(basename "$(command -v yum)")"
-
-  if [[ -z "$pkg_manager" ]]; then
-    cat <<EOT
-Sorry! This script is currently only compatible with:
-
-  apt-get based distributions, tested on:
-
-    Xubuntu
-
-  pacman based distributions, tested on:
-
-    Antergos
-    Manjaro
-
-  yum based distributions, tested on:
-
-    Fedora
-
-You're running:
-
-$(
-  if [[ -e /proc/version ]]; then
-    cat /proc/version
-  elif [[ -e /etc/issue ]]; then
-    cat /etc/issue
-  fi
-)
-
-EOT
-    exit 127
-  fi
-else
-  die "Oops! This script is not compatibile or test for your OS" 127
-fi
 # -- HELPER FUNCTIONS, PT. 2 --------------------------------------------------
 # Parse out .data sections of this file
 function get_pkgs() {
@@ -100,6 +60,20 @@ function clean_up() {
 }
 
 trap clean_up EXIT INT QUIT TERM
+# -- CHECK OS VERSION ---------------------------------------------------------
+pkg_manager=""
+if [[ $OSTYPE == linux-gnu* ]]; then
+  [[ -z "$pkg_manager" ]] && pkg_manager="$(basename "$(command -v apt-get)")"
+  [[ -z "$pkg_manager" ]] && pkg_manager="$(basename "$(command -v pacman)")"
+  [[ -z "$pkg_manager" ]] && pkg_manager="$(basename "$(command -v yum)")"
+
+  if [[ -z "$pkg_manager" ]]; then
+    get_conf "system-requirement"
+    exit 127
+  fi
+else
+  die "Oops! This script is not compatibile or test for your OS" 127
+fi
 # -----------------------------------------------------------------------------
 # Strip out comments, beginning and trailing whitespace, [ :].*$, and blank lines
 function clean() {
@@ -265,29 +239,7 @@ function genssl() {
 }
 # -- OVERVIEW OF CHANGES THAT WILL BE MADE ------------------------------------
 # .text
-cat <<EOT
-
-OK. It looks like we're ready to go.
-*******************************************************************************
-***** NOTE: This script assumes a "pristine" installation of Ubuntu,      *****
-***** If you've already made changes to files in /etc, then all bets      *****
-***** are off. You have been WARNED!                                      *****
-*******************************************************************************
-If you wish to continue, then this is what I'll be doing:
-  - Git-ifying your /etc folder with etckeeper
-  - Allow for password-less sudo by adding /etc/sudoers.d/10-local-users
-  - Install linux brew, and some brew packages
-  - Install Python  (via 'pyenv')             and install some pips
-  - Install Ruby    (via 'rbenv/ruby-build')  and install some gems
-  - Install NodeJs  (via 'n/n-install')       and install some npm packages
-  -- Configure:
-    - Postfix (Disable outgoing mail)
-    - MariaDB (InnoDB tweaks, etc.)
-    - Php.ini (Misc. configurations)
-    - Apache2 (Enable modules, and add wildcard vhost conf)
-      [including ServerAlias for *.localhost.metaltoad-sites.com, and *.xip.io]
-    - Dnsmasq (Resolve *.localhost domains w/OUT /etc/hosts editing)
-EOT
+get_conf "all-systems-go"
 
 # shellcheck disable=SC2034
 read -r -p "Hit [enter] to start or control-c to quit: " dummy
@@ -803,6 +755,62 @@ grunt-cli
 js-beautify
 jshint
 # End: npm
+# -----------------------------------------------------------------------------
+# Start: system-requirement
+cat <<EOT
+Sorry! This script is currently only compatible with:
+
+  apt-get based distributions, tested on:
+
+    Xubuntu
+
+  pacman based distributions, tested on:
+
+    Antergos
+    Manjaro
+
+  yum based distributions, tested on:
+
+    Fedora
+
+You're running:
+
+$(
+  if [[ -e /proc/version ]]; then
+    cat /proc/version
+  elif [[ -e /etc/issue ]]; then
+    cat /etc/issue
+  fi
+)
+
+EOT
+# End: system-requirement
+# -----------------------------------------------------------------------------
+# Start: all-systems-go
+cat <<EOT
+
+OK. It looks like we're ready to go.
+*******************************************************************************
+***** NOTE: This script assumes a "pristine" installation of Ubuntu,      *****
+***** If you've already made changes to files in /etc, then all bets      *****
+***** are off. You have been WARNED!                                      *****
+*******************************************************************************
+If you wish to continue, then this is what I'll be doing:
+  - Git-ifying your /etc folder with etckeeper
+  - Allow for password-less sudo by adding /etc/sudoers.d/10-local-users
+  - Install linux brew, and some brew packages
+  - Install Python  (via 'pyenv')             and install some pips
+  - Install Ruby    (via 'rbenv/ruby-build')  and install some gems
+  - Install NodeJs  (via 'n/n-install')       and install some npm packages
+  -- Configure:
+    - Postfix (Disable outgoing mail)
+    - MariaDB (InnoDB tweaks, etc.)
+    - Php.ini (Misc. configurations)
+    - Apache2 (Enable modules, and add wildcard vhost conf)
+      [including ServerAlias for *.localhost.metaltoad-sites.com, and *.xip.io]
+    - Dnsmasq (Resolve *.localhost domains w/OUT /etc/hosts editing)
+EOT
+# End: all-systems-go
 # -----------------------------------------------------------------------------
 # Start: mysqld_innodb.cnf
 cat <<EOT
