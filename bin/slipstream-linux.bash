@@ -678,6 +678,9 @@ libldap2-dev
 libsasl2-dev
 systemtap-sdt-dev
 zlib1g-dev
+# For pyenv
+libsqlite3-dev
+libssl-dev
 # End: apt-get
 # -----------------------------------------------------------------------------
 # Start: yum
