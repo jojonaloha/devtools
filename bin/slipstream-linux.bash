@@ -731,7 +731,6 @@ rbenv
 mariadb
 # Network
 # Shell
-bash-completion
 bash-git-prompt
 # Utilities
 apachetop
