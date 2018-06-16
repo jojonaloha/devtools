@@ -485,7 +485,7 @@ if qt grep '^# Local vhost and ssl, for \*.dev$'                        "$HTTPD_
   etc_git_commit "git add $HTTPD_CONF" "Remove references to .dev from $HTTPD_CONF"
 fi
 
-if [[ ! -f /etc/apache2/extra/localhost.conf ]] || ! qt grep "$PHP_FPM_HANDLER" /etc/apache2/extra/localhost.conf || ! qt grep \\.localhost\\.metaltoad-sites\\.com /etc/apache2/extra/localhost.conf || ! qt grep \\.xip\\.io /etc/apache2/extra/localhost.conf; then
+if [[ ! -f /etc/apache2/extra/localhost.conf ]] || ! qt grep "$PHP_FPM_HANDLER" /etc/apache2/extra/localhost.conf || ! qt grep \\.localhost\\.alt-3\\.com /etc/apache2/extra/localhost.conf || ! qt grep \\.xip\\.io /etc/apache2/extra/localhost.conf; then
   get_conf "localhost.conf" | qt sudo tee /etc/apache2/extra/localhost.conf
 
   if ! qt grep '^# Local vhost and ssl, for \*.localhost$' "$HTTPD_CONF"; then
@@ -556,6 +556,12 @@ fi
 [[ ! -d /etc/resolver ]] && sudo mkdir /etc/resolver
 if [[ ! -f /etc/resolver/localhost ]]; then
   cat <<EOT | qt sudo tee /etc/resolver/localhost
+nameserver 127.0.0.1
+EOT
+fi
+
+if [[ ! -f /etc/resolver/localhost.alt-3.com ]]; then
+  cat <<EOT | qt sudo tee /etc/resolver/localhost.alt-3.com
 nameserver 127.0.0.1
 EOT
 fi
@@ -850,7 +856,7 @@ If you wish to continue, then this is what I'll be doing:
     - MariaDB (InnoDB tweaks, etc.)
     - Php.ini (Misc. configurations)
     - Apache2 (Enable modules, and add wildcard vhost conf)
-      [including ServerAlias for *.localhost.metaltoad-sites.com, and *.xip.io]
+      [including ServerAlias for *.localhost.alt-3.com, and *.xip.io]
     - Dnsmasq (Resolve *.localhost domains w/OUT /etc/hosts editing)
 EOT
 # End: all-systems-go
@@ -888,7 +894,7 @@ EOT
 cat <<EOT
 <VirtualHost *:80>
   ServerAdmin $USER@localhost
-  ServerAlias *.localhost *.vmlocalhost *.localhost.metaltoad-sites.com *.xip.io
+  ServerAlias *.localhost *.vmlocalhost *.localhost.alt-3.com *.xip.io
   VirtualDocumentRoot $DEST_DIR/%1/webroot
 
   UseCanonicalName Off
@@ -928,7 +934,7 @@ cat <<EOT
 Listen 443
 <VirtualHost *:443>
   ServerAdmin $USER@localhost
-  ServerAlias *.localhost *.vmlocalhost *.localhost.metaltoad-sites.com
+  ServerAlias *.localhost *.vmlocalhost *.localhost.alt-3.com
   VirtualDocumentRoot $DEST_DIR/%1/webroot
 
   SSLEngine On
@@ -1015,7 +1021,7 @@ cat <<EOT
   the website will be served at:
   <ul>
     <li>http://your-website.localhost/ and</li>
-    <li>http://your-site.localhost.metaltoad-sites.com/</li>
+    <li>http://your-site.localhost.alt-3.com/</li>
   </ul>
   automatically.
 </p>
