@@ -752,7 +752,7 @@ sublime-text
 clipy
 # gimp
 google-chrome
-iterm2
+#iterm2
 # Apple Java
 # http://apple.stackexchange.com/questions/153584/install-java-jre-6-next-to-jre-7-on-os-x-10-10-yosemite
 # java
@@ -761,9 +761,9 @@ p4merge
 sequel-pro
 slack
 sourcetree
-vagrant
-vagrant-manager
-virtualbox
+#vagrant
+#vagrant-manager
+#virtualbox
 vlc
 # End: brew cask
 # -----------------------------------------------------------------------------
@@ -804,14 +804,14 @@ composer
 coreutils
 php-cs-fixer
 pngcrush
-the_silver_searcher
-wp-cli
+#the_silver_searcher
+#wp-cli
 # End: brew leaves
 # -----------------------------------------------------------------------------
 # Start: gem
-bundler
-compass
-capistrano -v 2.15.5
+#bundler
+#compass
+#capistrano -v 2.15.5
 # End: gem
 # -----------------------------------------------------------------------------
 # Start: npm
