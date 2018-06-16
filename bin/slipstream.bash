@@ -3,6 +3,7 @@
 # -- HELPER FUNCTIONS, PT. 1 --------------------------------------------------
 DEBUG=NotEmpty
 DEBUG=
+NOW="$(date '+%Y-%m-%d_%H-%M-%S')"
 
 # Echo to strerr
 function errcho() {
@@ -41,32 +42,15 @@ EOT
     die "Yikes! Please don't run this as root!" 127
   fi
 fi
-# -- CHECK MAC AND VERSION ----------------------------------------------------
-if [[ $OSTYPE == darwin* ]]; then
-  OSX_VERSION="$(sw_vers -productVersion)"
-  [[ "$OSX_VERSION" =~ 10.1[0123] ]]
-
-  if [[ $? -ne 0 ]]; then
-    cat <<EOT
-Sorry! This script is currently only compatible with:
-  Yosemite    (10.10*)
-  El Capitan  (10.11*)
-  Sierra      (10.12*)
-  High Sierra (10.13*)
-You're running:
-
-$(sw_vers)
-
-EOT
-    exit 127
-  fi
-else
-  die "Oops! This script was only meant for Mac OS X" 127
-fi
 # -- HELPER FUNCTIONS, PT. 2 --------------------------------------------------
 # Parse out .data sections of this file
 function get_pkgs() {
  sed -n "/Start: $1/,/End: $1/p" "$0"
+}
+
+# ... or eval it if there's code
+function get_conf() {
+  eval "$(get_pkgs "$1")"
 }
 
 MYPID="$$"
@@ -81,86 +65,109 @@ function clean_up() {
 }
 
 trap clean_up EXIT INT QUIT TERM
+# -- CHECK MAC AND VERSION ----------------------------------------------------
+if [[ $OSTYPE == darwin* ]]; then
+  OSX_VERSION="$(sw_vers -productVersion)"
+
+  if [[ ! "$OSX_VERSION" =~ 10.1[0123] ]]; then
+    get_conf "system-requirement"
+    exit 127
+  fi
+else
+  die "Oops! This script was only meant for Mac OS X" 127
+fi
 # -----------------------------------------------------------------------------
-# Strip out comments, beginning and trailing whitespace, [ :].*$, an blank lines
+# Strip out comments, beginning and trailing whitespace, [ :].*$, and blank lines
 function clean() {
   sed 's/#.*$//;s/^[[:blank:]][[:blank:]]*//g;s/[[:blank:]][[:blank:]]*$//;s/[ :].*$//;/^$/d' "$1" | sort -u
 }
 
 # Process install
 function process() {
-  local brew_php_linked debug extra line pecl_pkg
+  local brew_php_linked debug extra line pecl_pkg num_ver
 
   debug="$([[ ! -z "$DEBUG" ]] && echo echo)"
 
   # Compare what is already installed with what we want installed
-  while read -r -u3 line && [[ ! -z "$line" ]]; do
+  while read -r -u3 -a line && [[ ! -z "$line" ]]; do
     show_status "($1) $line"
     case "$1" in
       'brew tap')
-        $debug brew tap $line;;
+        $debug brew tap "${line[@]}";;
       'brew cask')
-        $debug brew cask install $line;;
+        $debug brew cask install "${line[@]}";;
       'brew leaves')
         # Quick hack to allow for extra --args
-        line="$(egrep "^$line[ ]*.*$" <(clean <(get_pkgs "$1")))"
-        $debug brew install $line;;
+        line="$(grep -E "^$line[ ]*.*$" <(clean <(get_pkgs "$1")))"
+        $debug brew install "${line[@]}";;
       'brew php')
-        brew_php_linked="$(qte cd /usr/local/var/homebrew/linked && qte ls -d php php@[57].[0-9]*)"
+        [[ -z "$BREW_PREFIX" ]] && die "Brew is either not yet installed, or \$BREW_PREFIX not yet set" 127
+
+        brew_php_linked="$(qte cd "$BREW_PREFIX/var/homebrew/linked" && qte ls -d php php@[57].[0-9]*)"
+        num_ver="$(grep -E -o '[0-9]+\.[0-9]+' <<< "$line" || brew info php | head -1 | grep -E -o '[0-9]+\.[0-9]+')"
+
         if [[ ! -z "$brew_php_linked" ]]; then
-          if [[ "$line" != "$brew_php_linked"* ]]; then
+          if [[ "$line" != "$brew_php_linked" ]]; then
             brew unlink "$brew_php_linked"
-            qte brew list "${line:0:6}" && brew link --overwrite --force "${line:0:6}"
           fi
         fi
-        $debug brew install $line
-        show_status "PECLs for: $line"
 
-        # brew rm $(brew list | egrep -e '^php$' -e '^php@') && rm -rf /usr/local/lib/php/pecl/ /usr/local/share/pear/
+        # Wipe the slate clean
+        if [[ -f "$BREW_PREFIX/etc/php/$num_ver/php.ini" ]]; then
+          show_status "Found old php.ini, backed up to: $BREW_PREFIX/etc/php/$num_ver/php.ini-$NOW"
+          mv "$BREW_PREFIX/etc/php/$num_ver/php.ini"{,-"$NOW"}
+        fi
+        rm -rf "$BREW_PREFIX/share/${line/php/pear}"
+
+        $debug brew install "${line[@]}"
+        $debug brew link --overwrite --force "$line"
+
+        show_status "Installing PECLs for: $line"
+
+        $debug "$BREW_PREFIX/opt/$line/bin/pecl" channel-update pecl.php.net
 
         # This inner loop to install pecl packages for specific php versions'
         # only run when the brew install for the specific version's run, i.e.,
         # pecl installation's not separate/standalone, currently.
         while read -r -u4 pecl_pkg; do
           if pecl_pkg="$(sed 's/#.*$//' <<< "$pecl_pkg")" && [[ ! -z "$pecl_pkg" ]]; then
+            # We're not checking to see if it's already installed
+
             # This entire block is to accommodate php@5.6 :/
             if [[ "$line" =~ @ ]] && [[ "$pecl_pkg" =~ $line ]]; then
               # TODO: refine this for multiple versions
               pecl_pkg="$(sed "s/:$line//" <<< "$pecl_pkg")"
+              show_status "PECL: Installing: $pecl_pkg"
+              qt "$BREW_PREFIX/opt/$line/bin/pecl" install "$pecl_pkg" <<< ''
             else
               pecl_pkg="$(sed 's/:.*$//' <<< "$pecl_pkg")"
-
-              # The /usr/local/opt/$line symlink is only available when the packaged is linked
-              export MACOSX_DEPLOYMENT_TARGET="$(sw_vers -productVersion | egrep -o '^[0-9]+\.[0-9]+')"
-              export CFLAGS='-fgnu89-inline'
-              export LDFLAGS='-fgnu89-inline'
-              export CXXFLAGS='-fgnu89-inline'
+              show_status "PECL: Installing: $pecl_pkg"
+              qt env MACOSX_DEPLOYMENT_TARGET="$(sw_vers -productVersion | grep -E -o '^[0-9]+\.[0-9]+')" \
+                  CFLAGS='-fgnu89-inline' \
+                  LDFLAGS='-fgnu89-inline' \
+                  CXXFLAGS='-fgnu89-inline' \
+                "$BREW_PREFIX/opt/$line/bin/pecl" install "$pecl_pkg" <<< ''
             fi
-
-            # We're not checking to see if it's already installed
-            show_status "Installing PECL: $pecl_pkg"
-            $debug "/usr/local/opt/$line/bin/pecl" channel-update pecl.php.net
-            yes '' | $debug "/usr/local/opt/$line/bin/pecl" install "$pecl_pkg"
           fi
         done 4< <(get_pkgs "pecl")
-        # find /usr/local/opt/php*/pecl/ -type f | sort
         ;;
       npm)
         SUDO=
-        $debug $SUDO npm install -g $line;;
+        $debug $SUDO npm install -g "${line[@]}";;
       gem)
         SUDO=sudo
+        # shellcheck disable=SC2012
         if [[ "$(ls -ld "$(command -v gem)" | awk '{print $3}')" != 'root' ]]; then
           SUDO=
         fi
 
         # http://stackoverflow.com/questions/31972968/cant-install-gems-on-macos-x-el-capitan
         if qt command -v csrutil && csrutil status | qt grep enabled; then
-          extra='-n /usr/local/bin'
+          extra=(-n $BREW_PREFIX/bin)
         fi
 
-        line="$(egrep "^$line[ ]*.*$" <(get_pkgs "$1"))"
-        $debug $SUDO "$1" install -f $extra $line;;
+        line="$(grep -E "^$line[ ]*.*$" <(get_pkgs "$1"))"
+        $debug $SUDO "$1" install -f "${extra[@]}" "${line[@]}";;
       *)
         ;;
     esac
@@ -194,7 +201,7 @@ function get_diff() {
 
 # Colorized output status
 function show_status() {
-  echo "$(tput setaf 3)Working on: $(tput setaf 5)${@}$(tput sgr0)"
+  echo "$(tput setaf 3)Working on: $(tput setaf 5)${*}$(tput sgr0)"
 }
 
 # Git commit /etc changes via sudo
@@ -232,38 +239,36 @@ function genssl() {
   # Step 4: Generating a Self-Signed Certificate
   openssl x509 -req -days 3650 -in "${domain}.csr" -signkey "${domain}.key" -out "${domain}.crt"
 }
+
+# Given: "max_execution_time = 0"
+# echo's: "s|;*[[:space:]]*max_execution_time[[:space:]]*=[[:space:]]*.*|max_execution_time = 0|"
+function get_ini_sed_script() {
+  local i pre peri post sed_script
+
+  pre=';*[[:space:]]*'
+  post='[[:space:]]*=[[:space:]]*.*'
+  sed_script=""
+
+  for i in "$@"; do
+    peri="${i%% *}"
+    sed_script="${sed_script}s|${pre}${peri}${post}|$i|"$'\n'
+  done
+
+  echo "$sed_script"
+}
 # -- CHECK AND INSTALL XCODE CLI TOOLS ----------------------------------------
 # .text
 if ! qt xcode-select -p; then
   echo "You don't seem to have Xcode Command Line Tools installed"
+  # shellcheck disable=SC2034
   read -r -p "Hit [enter] to start its installation. Re-run this script when done: " dummy
   xcode-select --install
   exit
 fi
 # -- OVERVIEW OF CHANGES THAT WILL BE MADE ------------------------------------
-cat <<EOT
+get_conf "all-systems-go"
 
-OK. It looks like we're ready to go.
-*******************************************************************************
-***** NOTE: This script assumes a "pristine" installation of Yosemite,    *****
-***** El Capitan, or Sierra. If you've already made changes to files in   *****
-***** /etc, then all bets are off. You have been WARNED!                  *****
-*******************************************************************************
-If you wish to continue, then this is what I'll be doing:
-  - Git-ifying your /etc folder
-  - Allow for password-less sudo by altering /etc/sudoers
-  - Install home brew, and some brew packages
-  - Update the System Ruby Gem, and install some gems
-  - Install some npm packages
-  -- Configure:
-    - Postfix (Disable outgoing mail)
-    - MariaDB (InnoDB tweaks, etc.)
-    - Php.ini (Misc. configurations)
-    - Apache2 (Enable modules, and add wildcard vhost conf)
-      [including ServerAlias for *.localhost.alt-3.com]
-    - Dnsmasq (Resolve *.localhost.alt-3.com domains w/OUT /etc/hosts editing)
-EOT
-
+# shellcheck disable=SC2034
 read -r -p "Hit [enter] to start or control-c to quit: " dummy
 # -- KEEP DISPLAY/SYSTEM FROM IDLING/SLEEPING ---------------------------------
 # Generously setting for an hour, but clean_up() will kill it upon exit or
@@ -284,7 +289,7 @@ fi
 # -- PASSWORDLESS SUDO --------------------------------------------------------
 if ! qt sudo grep '^%admin[[:space:]]*ALL=(ALL) NOPASSWD: ALL' /etc/sudoers; then
   show_status "Making sudo password-less for 'admin' group"
-  sudo sed -i .bak 's/\(%admin[[:space:]]*ALL[[:space:]]*=[[:space:]]*(ALL)\)[[:space:]]*ALL/\1 NOPASSWD: ALL/' /etc/sudoers
+  sudo sed -i.bak 's/\(%admin[[:space:]]*ALL[[:space:]]*=[[:space:]]*(ALL)\)[[:space:]]*ALL/\1 NOPASSWD: ALL/' /etc/sudoers
 
   if qt diff /etc/sudoers /etc/sudoers.bak; then
     echo "No change made to: /etc/sudoers"
@@ -309,17 +314,35 @@ else
     die "Hmm... Old version of brew detected. You may want to run: brew update; brew upgrade; and re-run this script when done" 127
   fi
 
-  # https://brew.sh/2018/01/19/homebrew-1.5.0/
-  currentBrewVersion="$(brew --version | grep -E -o ' [0-9]+\.[0-9]+')"
+  BREW_PREFIX="$(brew --prefix)"
+  export BREW_PREFIX
 
-  if [[ "$(echo -e "$currentBrewVersion\\n 1.4" | sort -r | head -1)" = ' 1.4' ]]; then
+  # https://brew.sh/2018/01/19/homebrew-1.5.0/
+  currentBrewVersion="$(brew --version | grep -E -o '[0-9]+\.[0-9]+')"
+
+  if [[ "$(echo -e "$currentBrewVersion\\n1.4" | sort -t '.' -k 1,1 -k 2,2 -g | tail -1)" = '1.4' ]]; then
     errcho "In brew version 1.5 (http://bit.ly/2q9wcoI / http://bit.ly/2qcXiem) the php tap has been archived."
     die "This script will no longer support the older version" 127
-    # brew list | egrep -e '^php[57]' > /dev/null && brew rm $(brew list | egrep -e '^php[57]')
-    # brew tap  | egrep homebrew/php  > /dev/null && brew untap homebrew/php
-    # find /usr/local/etc/php -name ext-mcrypt.ini -delete
+  else
+    if brew list | qt grep -E -e '^php[57]'; then
+      show_status "Found old packages from the homebrew/php tap. Deleting"
+      brew list | grep -E -e '^php[57]' | xargs brew rm --force --ignore-dependencies
+      # TODO: during a test run, 'brew rm php56' failed, due to
+      # $BREW_PREFIX/Cellar/php@5.6/5.6.35/var being owned by root. It seems
+      # isolated to one laptop, since the ownership was correct on another
+      # laptop.
+    fi
+
+    if brew tap  | qt grep -E homebrew/php; then
+      show_status "Found old homebrew/php tap. Deleting"
+      brew untap homebrew/php
+    fi
+    [[ -d "$BREW_PREFIX/etc/php" ]] && find "$BREW_PREFIX/etc/php" -name ext-mcrypt.ini -delete
   fi
 fi
+
+BREW_PREFIX="$(brew --prefix)"
+export BREW_PREFIX
 
 show_status "brew tap"
 process "brew tap"
@@ -361,7 +384,7 @@ EOT
 fi
 
 qt pushd /etc/
-if git status | qt egrep 'postfix/main.cf|postfix/virtual'; then
+if git status | qt grep -E 'postfix/main.cf|postfix/virtual'; then
   etc_git_commit "git add postfix/main.cf postfix/virtual" "Disable outgoing mail (postfix tweaks)"
 fi
 qt popd
@@ -370,43 +393,18 @@ echo "== Processing MariaDB =="
 
 # brew info mariadb
 [[ ! -d ~/Library/LaunchAgents ]] && mkdir -p  ~/Library/LaunchAgents
-if qt ls /usr/local/opt/mariadb/*.plist && ! qt ls ~/Library/LaunchAgents/homebrew.mxcl.mariadb.plist; then
+if qt ls "$BREW_PREFIX/opt/mariadb/"*.plist && ! qt ls ~/Library/LaunchAgents/homebrew.mxcl.mariadb.plist; then
   show_status 'Linking MariaDB LaunchAgent plist'
-  ln -sfv /usr/local/opt/mariadb/*.plist ~/Library/LaunchAgents/homebrew.mxcl.mariadb.plist
+  ln -sfv "$BREW_PREFIX/opt/mariadb/"*.plist ~/Library/LaunchAgents/homebrew.mxcl.mariadb.plist
 fi
 
 [[ ! -d /etc/homebrew/etc/my.cnf.d ]] && sudo mkdir -p /etc/homebrew/etc/my.cnf.d
 if [[ ! -f /etc/homebrew/etc/my.cnf.d/mysqld_innodb.cnf ]]; then
   show_status 'Creating: /etc/homebrew/etc/my.cnf.d/mysqld_innodb.cnf'
-  cat <<EOT | qt sudo tee /etc/homebrew/etc/my.cnf.d/mysqld_innodb.cnf
-[mysqld]
-innodb_file_per_table = 1
-socket = /tmp/mysql.sock
+  get_conf "mysqld_innodb.cnf" | qt sudo tee /etc/homebrew/etc/my.cnf.d/mysqld_innodb.cnf
 
-query_cache_type = 1
-query_cache_size = 128M
-query_cache_limit = 2M
-max_allowed_packet = 64M
-
-default_storage_engine = InnoDB
-innodb_flush_method=O_DIRECT
-innodb_buffer_pool_size = 512M
-innodb_log_buffer_size = 16M
-innodb_flush_log_at_trx_commit = 0
-# Deprecated: innodb_locks_unsafe_for_binlog = 1
-innodb_log_file_size = 256M
-
-tmp_table_size = 32M
-max_heap_table_size = 32M
-thread_cache_size = 4
-query_cache_limit = 2M
-join_buffer_size = 8M
-bind-address = 127.0.0.1
-key_buffer_size = 256M
-EOT
-
-  show_status 'Linking to: /usr/local/etc/my.cnf.d/mysqld_innodb.cnf'
-  ln -svf /etc/homebrew/etc/my.cnf.d/mysqld_innodb.cnf /usr/local/etc/my.cnf.d/mysqld_innodb.cnf
+  show_status "Linking to: $BREW_PREFIX/etc/my.cnf.d/mysqld_innodb.cnf"
+  ln -svf /etc/homebrew/etc/my.cnf.d/mysqld_innodb.cnf "$BREW_PREFIX/etc/my.cnf.d/mysqld_innodb.cnf"
   etc_git_commit "git add homebrew" "Add homebrew/etc/my.cnf.d/mysqld_innodb.cnf"
 fi
 
@@ -419,30 +417,34 @@ if ! qt launchctl list homebrew.mxcl.mariadb; then
   show_status 'Setting mysql root password... waiting for mysqld to start'
   # Just sleep, waiting for mariadb to start
   sleep 7
-  mysql -u root mysql <<< "UPDATE user SET password=PASSWORD('root') WHERE User='root'; FLUSH PRIVILEGES;"
+  mysql -u root mysql <<< "SET SQL_SAFE_UPDATES = 0; UPDATE user SET password=PASSWORD('root') WHERE User='root'; FLUSH PRIVILEGES; SET SQL_SAFE_UPDATES = 1;"
 fi
 # -- SETUP APACHE -------------------------------------------------------------
 echo "== Processing Apache =="
 
-# apache httpd.conf?
-# diff -r apache2/httpd.conf /Users/jeebak/SlipStream/host/apache2/httpd.conf
+HTTPD_CONF="/etc/apache2/httpd.conf"
+
 show_status 'Updating httpd.conf settings'
 for i in \
-  'LoadModule socache_shmcb_module libexec/apache2/mod_socache_shmcb.so' \
-  'LoadModule ssl_module libexec/apache2/mod_ssl.so' \
-  'LoadModule cgi_module libexec/apache2/mod_cgi.so' \
-  'LoadModule vhost_alias_module libexec/apache2/mod_vhost_alias.so' \
-  'LoadModule actions_module libexec/apache2/mod_actions.so' \
-  'LoadModule rewrite_module libexec/apache2/mod_rewrite.so' \
-  'LoadModule proxy_fcgi_module libexec/apache2/mod_proxy_fcgi.so' \
-  'LoadModule proxy_module libexec/apache2/mod_proxy.so' \
+  'LoadModule socache_shmcb_module ' \
+  'LoadModule ssl_module ' \
+  'LoadModule cgi_module ' \
+  'LoadModule vhost_alias_module ' \
+  'LoadModule actions_module ' \
+  'LoadModule rewrite_module ' \
+  'LoadModule proxy_fcgi_module ' \
+  'LoadModule proxy_module ' \
 ; do
-  sudo sed -i .bak "s;#$i;$i;" /etc/apache2/httpd.conf
+  sudo sed -i.bak "s;#.*${i}\\(.*\\);${i}\\1;"  "$HTTPD_CONF"
 done
 
-DEV_DIR="/Users/$USER/Sites"
+sudo sed -i.bak "s;^Listen 80.*$;Listen 80;"    "$HTTPD_CONF"
+sudo sed -i.bak "s;^User .*$;User $USER;"       "$HTTPD_CONF"
+sudo sed -i.bak "s;^Group .*$;Group $(id -gn);" "$HTTPD_CONF"
 
-[[ ! -d "$DEV_DIR" ]] && mkdir -p "$DEV_DIR"
+DEST_DIR="/Users/$USER/Sites"
+
+[[ ! -d "$DEST_DIR" ]] && mkdir -p "$DEST_DIR"
 
 if [[ ! -d "/etc/apache2/ssl" ]]; then
   mkdir -p "$$/ssl"
@@ -465,112 +467,29 @@ PHP_FPM_HANDLER="fcgi://${PHP_FPM_LISTEN}"
 PHP_FPM_PROXY="fcgi://${PHP_FPM_LISTEN}"
 
 # Since port 9000 is also the default port for xdebug, so lets use...
-PHP_FPM_LISTEN="/usr/local/var/run/php-fpm.sock"
+PHP_FPM_LISTEN="$BREW_PREFIX/var/run/php-fpm.sock"
 PHP_FPM_HANDLER="proxy:unix:$PHP_FPM_LISTEN|fcgi://localhost/"
 PHP_FPM_PROXY="fcgi://localhost/"
 
-[[ ! -d /usr/local/var/run ]] && mkdir -p /usr/local/var/run
+[[ ! -d "$BREW_PREFIX/var/run" ]] && mkdir -p "$BREW_PREFIX/var/run"
 
 if [[ -f /etc/apache2/extra/dev.conf ]]; then
   etc_git_commit "git rm apache2/extra/dev.conf" "Remove apache2/extra/dev.conf"
 fi
 
-if qt grep '^# Local vhost and ssl, for \*.dev$' /etc/apache2/httpd.conf; then
-  sudo sed -i .bak '/^# Local vhost and ssl, for \*.dev$/d' /etc/apache2/httpd.conf
-  sudo sed -i .bak '/Include \/private\/etc\/apache2\/extra\/dev.conf/d' /etc/apache2/httpd.conf
-  sudo rm /etc/apache2/httpd.conf.bak
+if qt grep '^# Local vhost and ssl, for \*.dev$'                        "$HTTPD_CONF"; then
+  sudo sed -i.bak '/^# Local vhost and ssl, for \*.dev$/d'              "$HTTPD_CONF"
+  sudo sed -i.bak '/Include \/private\/etc\/apache2\/extra\/dev.conf/d' "$HTTPD_CONF"
+  sudo rm "${HTTPD_CONF}.bak"
 
-  etc_git_commit "git add /etc/apache2/httpd.conf" "Remove references to .dev from /etc/apache2/httpd.conf"
+  etc_git_commit "git add $HTTPD_CONF" "Remove references to .dev from $HTTPD_CONF"
 fi
 
-if [[ ! -f /etc/apache2/extra/localhost.conf ]] || ! qt grep "$PHP_FPM_HANDLER" /etc/apache2/extra/localhost.conf || ! qt grep \\.localhost\\.alt-3\\.com /etc/apache2/extra/localhost.conf || ! qt grep \\.xip\\.io /etc/apache2/extra/localhost.conf; then
-  cat <<EOT | qt sudo tee /etc/apache2/extra/localhost.conf
-<VirtualHost *:80>
-  ServerAdmin $USER@localhost
-  ServerAlias *.localhost *.vmlocalhost *.localhost.alt-3.com *.xip.io
-  VirtualDocumentRoot $DEV_DIR/%1/webroot
+if [[ ! -f /etc/apache2/extra/localhost.conf ]] || ! qt grep "$PHP_FPM_HANDLER" /etc/apache2/extra/localhost.conf || ! qt grep \\.localhost\\.metaltoad-sites\\.com /etc/apache2/extra/localhost.conf || ! qt grep \\.xip\\.io /etc/apache2/extra/localhost.conf; then
+  get_conf "localhost.conf" | qt sudo tee /etc/apache2/extra/localhost.conf
 
-  UseCanonicalName Off
-
-  LogFormat "%V %h %l %u %t \"%r\" %s %b" vcommon
-  CustomLog "/var/log/apache2/access_log" vcommon
-  ErrorLog "/var/log/apache2/error_log"
-
-  # With the switch to php-fpm, the apache2/other/php5.conf is not "Include"-ed, so need to...
-  AddType application/x-httpd-php .php
-  AddType application/x-httpd-php-source .phps
-
-  <IfModule dir_module>
-    DirectoryIndex index.html index.php
-  </IfModule>
-
-  # Depends on: LoadModule proxy_fcgi_module libexec/apache2/mod_proxy_fcgi.so in /etc/apache2/httpd.conf
-  #   http://serverfault.com/a/672969
-  #   https://httpd.apache.org/docs/2.4/mod/mod_proxy_fcgi.html
-  # This is to forward all PHP to php-fpm.
-  <FilesMatch \.php$>
-    SetHandler "${PHP_FPM_HANDLER}"
-  </FilesMatch>
-
-  <Proxy ${PHP_FPM_PROXY}>
-    ProxySet connectiontimeout=5 timeout=1800
-  </Proxy>
-
-  <Directory "$DEV_DIR">
-    AllowOverride All
-    Options +Indexes +FollowSymLinks +ExecCGI
-    Require all granted
-    RewriteBase /
-  </Directory>
-</VirtualHost>
-
-Listen 443
-<VirtualHost *:443>
-  ServerAdmin $USER@localhost
-  ServerAlias *.localhost *.vmlocalhost *.localhost.alt-3.com
-  VirtualDocumentRoot $DEV_DIR/%1/webroot
-
-  SSLEngine On
-  SSLCertificateFile    /private/etc/apache2/ssl/server.crt
-  SSLCertificateKeyFile /private/etc/apache2/ssl/server.key
-
-  UseCanonicalName Off
-
-  LogFormat "%V %h %l %u %t \"%r\" %s %b" vcommon
-  CustomLog "/var/log/apache2/access_log" vcommon
-  ErrorLog "/var/log/apache2/error_log"
-
-  # With the switch to php-fpm, the apache2/other/php5.conf is not "Include"-ed, so need to...
-  AddType application/x-httpd-php .php
-  AddType application/x-httpd-php-source .phps
-
-  <IfModule dir_module>
-    DirectoryIndex index.html index.php
-  </IfModule>
-
-  # Depends on: LoadModule proxy_fcgi_module libexec/apache2/mod_proxy_fcgi.so in /etc/apache2/httpd.conf
-  #   http://serverfault.com/a/672969
-  #   https://httpd.apache.org/docs/2.4/mod/mod_proxy_fcgi.html
-  # This is to forward all PHP to php-fpm.
-  <FilesMatch \.php$>
-    SetHandler "${PHP_FPM_HANDLER}"
-  </FilesMatch>
-
-  <Proxy ${PHP_FPM_PROXY}>
-    ProxySet connectiontimeout=5 timeout=240
-  </Proxy>
-
-  <Directory "$DEV_DIR">
-    AllowOverride All
-    Options +Indexes +FollowSymLinks +ExecCGI
-    Require all granted
-    RewriteBase /
-  </Directory>
-</VirtualHost>
-EOT
-
-  if ! qt grep '^# Local vhost and ssl, for \*.localhost$' /etc/apache2/httpd.conf; then
-    cat <<EOT | qt sudo tee -a /etc/apache2/httpd.conf
+  if ! qt grep '^# Local vhost and ssl, for \*.localhost$' "$HTTPD_CONF"; then
+    cat <<EOT | qt sudo tee -a "$HTTPD_CONF"
 
 # Local vhost and ssl, for *.localhost
 Include /private/etc/apache2/extra/localhost.conf
@@ -580,15 +499,15 @@ EOT
   etc_git_commit "git add apache2/extra/localhost.conf" "Add apache2/extra/localhost.conf"
 else
   if qt grep ' ProxySet connectiontimeout=5 timeout=240$' /etc/apache2/extra/localhost.conf; then
-    sudo sed -i .bak 's/ ProxySet connectiontimeout=5 timeout=240/ ProxySet connectiontimeout=5 timeout=1800/' /etc/apache2/extra/localhost.conf
+    sudo sed -i.bak 's/ ProxySet connectiontimeout=5 timeout=240/ ProxySet connectiontimeout=5 timeout=1800/' /etc/apache2/extra/localhost.conf
     sudo rm /etc/apache2/extra/localhost.conf.bak
 
     etc_git_commit "git add apache2/extra/localhost.conf" "Update apache2/extra/localhost.conf ProxySet timeout value to 1800"
   fi
 fi
 
-if ! qt grep '^# To avoid: Gateway Timeout, during xdebug session (analogous changes made to the php.ini files)$' /etc/apache2/httpd.conf; then
-  cat <<EOT | qt sudo tee -a /etc/apache2/httpd.conf
+if ! qt grep '^# To avoid: Gateway Timeout, during xdebug session (analogous changes made to the php.ini files)$' "$HTTPD_CONF"; then
+  cat <<EOT | qt sudo tee -a "$HTTPD_CONF"
 
 # To avoid: Gateway Timeout, during xdebug session (analogous changes made to the php.ini files)
 Timeout 1800
@@ -596,13 +515,13 @@ EOT
 fi
 
 # Have ServerName match CN in SSL Cert
-sudo sed -i .bak 's/#ServerName www.example.com:80/ServerName 127.0.0.1/' /etc/apache2/httpd.conf
-if qt diff /etc/apache2/httpd.conf /etc/apache2/httpd.conf.bak; then
+sudo sed -i.bak 's/#ServerName www.example.com:80/ServerName 127.0.0.1/' "$HTTPD_CONF"
+if qt diff "$HTTPD_CONF" "${HTTPD_CONF}.bak"; then
   echo "No change made to: apache2/httpd.conf"
 else
   etc_git_commit "git add apache2/httpd.conf" "Update apache2/httpd.conf"
 fi
-sudo rm /etc/apache2/httpd.conf.bak
+sudo rm "${HTTPD_CONF}.bak"
 
 # https://clickontyler.com/support/a/38/how-start-apache-automatically/
 
@@ -614,12 +533,12 @@ fi
 echo "== Processing Dnsmasq =="
 
 # dnsmasq (add note to /etc/hosts)
-#  add symlinks as non-root to /usr/local/etc files
+#  add symlinks as non-root to $BREW_PREFIX/etc files
 
-if qt ls /usr/local/opt/dnsmasq/*.plist && ! qt ls /Library/LaunchDaemons/homebrew.mxcl.dnsmasq.plist; then
+if qt ls "$BREW_PREFIX/opt/dnsmasq/"*.plist && ! qt ls /Library/LaunchDaemons/homebrew.mxcl.dnsmasq.plist; then
   show_status 'Linking Dnsmasq LaunchAgent plist'
   # brew info dnsmasq
-  sudo cp -fv /usr/local/opt/dnsmasq/*.plist /Library/LaunchDaemons
+  sudo cp -fv "$BREW_PREFIX/opt/dnsmasq/"*.plist /Library/LaunchDaemons
   sudo chown root /Library/LaunchDaemons/homebrew.mxcl.dnsmasq.plist
 fi
 
@@ -630,8 +549,8 @@ address=/.localhost/127.0.0.1
 address=/.dev/127.0.0.1
 address=/.localhost.alt-3.com/127.0.0.1
 EOT
-  show_status 'Linking to: /usr/local/etc/dnsmasq.conf'
-  ln -svf /etc/homebrew/etc/dnsmasq.conf /usr/local/etc/dnsmasq.conf
+  show_status "Linking to: $BREW_PREFIX/etc/dnsmasq.conf"
+  ln -svf /etc/homebrew/etc/dnsmasq.conf "$BREW_PREFIX/etc/dnsmasq.conf"
 fi
 
 [[ ! -d /etc/resolver ]] && sudo mkdir /etc/resolver
@@ -648,7 +567,7 @@ if ! qt sudo launchctl list homebrew.mxcl.dnsmasq; then
 fi
 
 qt pushd /etc/
-if git status | qt egrep 'resolver/localhost|homebrew/etc/dnsmasq.conf'; then
+if git status | qt grep -E 'resolver/localhost|homebrew/etc/dnsmasq.conf'; then
   etc_git_commit "git add resolver/localhost homebrew/etc/dnsmasq.conf" "Add dnsmasq files"
 fi
 qt popd
@@ -666,104 +585,72 @@ EOT
 
   etc_git_commit "git add hosts" "Add dnsmasq note to hosts file"
 fi
-# -- SETUP BREW PHP / PHP.INI /  XDEBUG-----------------------------------------
+# -- SETUP BREW PHP / PHP.INI / XDEBUG ----------------------------------------
 echo "== Processing Brew PHP / php.ini / Xdebug =="
 
 [[ ! -d ~/Library/LaunchAgents ]] && mkdir -p  ~/Library/LaunchAgents
 
-for i in /usr/local/etc/php/*/php.ini; do
-  version="$(basename "$(dirname "$i")")"
-  ver="${version/./}"
-  v="${ver:0:1}"
+ini_settings=(
+  "date.timezone = America/Los_Angeles"
+  "display_errors = On"
+  "display_startup_errors = On"
+  "error_log = /var/log/apache2/php_errors.log"
+  "max_execution_time = 0"
+  "max_input_time = 1800"
+  "max_input_vars = 10000"
+  "memory_limit = 256M"
+  "mysql.default_socket = /tmp/mysql.sock"
+  "mysqli.default_socket = /tmp/mysql.sock"
+  "pdo_mysql.default_socket = /tmp/mysql.sock"
+  "post_max_size = 100M"
+  "realpath_cache_size = 128K"
+  "realpath_cache_ttl = 3600"
+  "upload_max_filesize = 100M"
+)
+
+conf_settings=(
+  "listen = $PHP_FPM_LISTEN"
+  "listen.mode = 0666"
+  "pm.max_children = 10"
+)
+
+for i in "$BREW_PREFIX/etc/php/"*/php.ini; do
+  dir_path="${i%/*}"
+  version="$(grep -E -o '[0-9]+\.[0-9]+' <<< "$i")"
 
   # Process php.ini for $version
-  if [[ ! -f "/etc/homebrew/etc/php/$version/php.ini" ]]; then
-    show_status "Copying Default Brew PHP $version Php.ini"
-    [[ ! -d "/etc/homebrew/etc/php/$version" ]] && sudo mkdir -p "/etc/homebrew/etc/php/$version"
-    sudo cp "/usr/local/etc/php/$version/php.ini" "/etc/homebrew/etc/php/$version/php.ini"
+  show_status "Updating some $i settings"
+  sed -i.bak "$(get_ini_sed_script "${ini_settings[@]}")" "$i"
+  mv "${i}.bak" "${i}.${NOW}-post-process"
+  show_status "Original saved to: ${i}.${NOW}-post-process"
 
-    etc_git_commit "git add homebrew/etc/php/$version/php.ini" "Add homebrew/etc/php/$version/php.ini as a copy of homebrew default"
-
-    show_status 'Updating some brew PHP settings'
-    sudo sed -i .bak '
-      s|max_execution_time = 30|max_execution_time = 0|
-      s|max_input_time = 60|max_input_time = 1800|
-      s|; *max_input_vars = 1000|max_input_vars = 10000|
-      s|memory_limit = 128M|memory_limit = 256M|
-      s|display_errors = Off|display_errors = On|
-      s|display_startup_errors = Off|display_startup_errors = On|
-      s|;error_log = php_errors.log|error_log = /var/log/apache2/php_errors.log|
-      s|;date.timezone =|date.timezone = America/Los_Angeles|
-      s|pdo_mysql.default_socket=|pdo_mysql.default_socket="/tmp/mysql.sock"|
-      s|mysql.default_socket =|mysql.default_socket = "/tmp/mysql.sock"|
-      s|mysqli.default_socket =|mysqli.default_socket = "/tmp/mysql.sock"|
-      s|upload_max_filesize = 2M|upload_max_filesize = 100M|
-    ' "/etc/homebrew/etc/php/$version/php.ini"
-    sudo rm "/etc/homebrew/etc/php/$version/php.ini.bak"
-
-    show_status "Linking to: /etc/homebrew/etc/php/$version/php.ini"
-    if [[ -f "/usr/local/etc/php/$version/php.ini" ]]; then
-      mv /usr/local/etc/php/"$version"/php.ini{,.orig}
-    fi
-    ln -svf "/etc/homebrew/etc/php/$version/php.ini" "/usr/local/etc/php/$version/php.ini"
-
-    etc_git_commit "git add homebrew/etc/php/$version/php.ini" "Update homebrew/etc/php/$version/php.ini"
+  # Process ext-xdebug.ini
+  if [[ -f "$dir_path/conf.d/ext-xdebug.ini" ]]; then
+    show_status "Found old ext-xdebug.ini, backed up to: $dir_path/conf.d/ext-xdebug.ini"
+    mv "$dir_path/conf.d/ext-xdebug.ini"{,-"$NOW"}
   fi
-
-  # Process ext-xdebug.ini for $version
-  if [[ ! -f "/etc/homebrew/etc/php/$version/conf.d/ext-xdebug.ini" ]]; then
-    show_status "Copying Default Brew PHP $version ext-xdebug.ini"
-    [[ ! -d "/etc/homebrew/etc/php/$version/conf.d" ]] && sudo mkdir -p "/etc/homebrew/etc/php/$version/conf.d"
-    sudo cp "/usr/local/etc/php/$version/conf.d/ext-xdebug.ini" "/etc/homebrew/etc/php/$version/conf.d/ext-xdebug.ini"
-
-    etc_git_commit "git add homebrew/etc/php/$version/conf.d/ext-xdebug.ini" "Add homebrew/etc/php/$version/conf.d/ext-xdebug.ini as a copy of homebrew default"
-
-    show_status "Updating: /etc/homebrew/etc/php/$version/conf.d/ext-xdebug.ini"
-    cat <<EOT | qt sudo tee "/etc/homebrew/etc/php/$version/conf.d/ext-xdebug.ini"
-[xdebug]
-; The "real" path to the .so file would be:
-;   zend_extension="/usr/local/Cellar/php${ver}-xdebug/*/xdebug.so"
-; but Homebrew provides this convenient symlink:
- zend_extension="/usr/local/opt/php${ver}-xdebug/xdebug.so"
-
- xdebug.remote_enable=On
- xdebug.remote_host=127.0.0.1
- xdebug.remote_port=9000
- xdebug.remote_handler="dbgp"
- xdebug.remote_mode=req;
-
- xdebug.profiler_enable_trigger=1;
- xdebug.trace_enable_trigger=1;
- xdebug.trace_output_name = "trace.out.%t-%s.%u"
- xdebug.profiler_output_name = "cachegrind.out.%t-%s.%u"
-EOT
-
-    show_status "Linking to: /etc/homebrew/etc/php/$version/conf.d/ext-xdebug.ini"
-    if [[ -f "/usr/local/etc/php/$version/conf.d/ext-xdebug.ini" ]]; then
-      mv /usr/local/etc/php/"$version"/conf.d/ext-xdebug.ini{,.orig}
-    fi
-    ln -svf "/etc/homebrew/etc/php/$version/conf.d/ext-xdebug.ini" "/usr/local/etc/php/$version/conf.d/ext-xdebug.ini"
-
-    etc_git_commit "git add homebrew" "Update homebrew/etc/php/$version/conf.d/ext-xdebug.ini"
-  fi
+  show_status       "Updating: $dir_path/conf.d/ext-xdebug.ini"
+  get_conf "ext-xdebug.ini" > "$dir_path/conf.d/ext-xdebug.ini"
 
   # Process php-fpm.conf for $version
   #   This is the path for 7.x, and we need to check for it 1st, because it's easier this way
-  if [[ -f "/usr/local/etc/php/$version/php-fpm.d/www.conf" ]]; then
-    php_fpm_conf="/usr/local/etc/php/$version/php-fpm.d/www.conf"
-  elif [[ -f "/usr/local/etc/php/$version/php-fpm.conf" ]]; then
-    php_fpm_conf="/usr/local/etc/php/$version/php-fpm.conf"
+  if [[ -f "$BREW_PREFIX/etc/php/$version/php-fpm.d/www.conf" ]]; then
+    php_fpm_conf="$BREW_PREFIX/etc/php/$version/php-fpm.d/www.conf"
+  elif [[ -f "$BREW_PREFIX/etc/php/$version/php-fpm.conf" ]]; then
+    php_fpm_conf="$BREW_PREFIX/etc/php/$version/php-fpm.conf"
   else
     php_fpm_conf=""
   fi
 
-  if [[ ! -z "$php_fpm_conf" ]] && ! qt egrep "^listen[[:space:]]*=[[:space:]]*$PHP_FPM_LISTEN" "$php_fpm_conf"; then
+  if [[ ! -z "$php_fpm_conf" ]] && ! qt grep -E "^listen[[:space:]]*=[[:space:]]*$PHP_FPM_LISTEN" "$php_fpm_conf"; then
     show_status "Updating $php_fpm_conf"
-    sudo sed -i .bak "
-      s|^listen[[:space:]]*=[[:space:]]*.*|listen = $PHP_FPM_LISTEN|
-      s|[;]*listen.mode[[:space:]]*=[[:space:]]*.*|listen.mode = 0666|
+    sed -i.bak "
+      $(get_ini_sed_script "${conf_settings[@]}")
+      /^user[[:space:]]*=[[:space:]]*.*/ s|^|;|
+      /^group[[:space:]]*=[[:space:]]*.*/ s|^|;|
     " "$php_fpm_conf"
-    sudo rm "${php_fpm_conf}.bak"
+    mv "${php_fpm_conf}.bak" "${php_fpm_conf}-${NOW}"
+    show_status "Original saved to: ${php_fpm_conf}-${NOW}"
   fi
 done
 
@@ -773,31 +660,31 @@ if [[ -d /etc/homebrew/etc/apache2 ]]; then
   etc_git_commit "git rm -r homebrew/etc/apache2" "Deleting homebrew/etc/apache2 for switch to php-fpm"
 fi
 
-if [[ -d /usr/local/var/run/apache2 ]]; then
-  rm -rf /usr/local/var/run/apache2
+if [[ -d "$BREW_PREFIX/var/run/apache2" ]]; then
+  rm -rf "$BREW_PREFIX/var/run/apache2"
 fi
 
 # Account for both newly and previously provisioned scenarios
-sudo sed -i .bak "s;^\(LoadModule[[:space:]]*php5_module[[:space:]]*libexec/apache2/libphp5.so\);# \1;"                       /etc/apache2/httpd.conf
-sudo sed -i .bak "s;^\(LoadModule[[:space:]]*php5_module[[:space:]]*/usr/local/opt/php56/libexec/apache2/libphp5.so\);# \1;"  /etc/apache2/httpd.conf
-sudo sed -i .bak "s;^\(Include[[:space:]]\"*/usr/local/var/run/apache2/php.conf\);# \1;"                                      /etc/apache2/httpd.conf
-sudo rm /etc/apache2/httpd.conf.bak
+sudo sed -i.bak "s;^\\(LoadModule[[:space:]]*php5_module[[:space:]]*libexec/apache2/libphp5.so\\);# \\1;"                         "$HTTPD_CONF"
+sudo sed -i.bak "s;^\\(LoadModule[[:space:]]*php5_module[[:space:]]*$BREW_PREFIX/opt/php56/libexec/apache2/libphp5.so\\);# \\1;"  "$HTTPD_CONF"
+sudo sed -i.bak "s;^\\(Include[[:space:]]\"*$BREW_PREFIX/var/run/apache2/php.conf\\);# \\1;"                                      "$HTTPD_CONF"
+sudo rm "${HTTPD_CONF}.bak"
 
 qt pushd /etc/
-if git status | qt egrep 'apache2/httpd.conf'; then
+if git status | qt grep -E 'apache2/httpd.conf'; then
   etc_git_commit "git add apache2/httpd.conf" "Update apache2/httpd.conf to use brew php-fpm"
 fi
 qt popd
 
-while read -r -u3 service the_rest && [[ ! -z "$service" ]]; do
+while read -r -u3 service && [[ ! -z "$service" ]]; do
   qte brew services stop "$service"
-done 3< <(brew services list | egrep -e '^php ' -e '^php@[57]' | grep ' started ')
+done 3< <(brew services list | grep -E -e '^php ' -e '^php@[57]' | grep ' started ' | cut -f1 -d' ')
 
 # Make php@5.6 the default
-[[ ! -d /usr/local/var/log/ ]] && mkdir -p /usr/local/var/log/
+[[ ! -d "$BREW_PREFIX/var/log/" ]] && mkdir -p "$BREW_PREFIX/var/log/"
 brew services start php@5.6
 
-brew_php_linked="$(qte cd /usr/local/var/homebrew/linked && qte ls -d php php@[57].[0-9]*)"
+brew_php_linked="$(qte cd "$BREW_PREFIX/var/homebrew/linked" && qte ls -d php php@[57].[0-9]*)"
 # Only link if brew php is not linked. If it is, we assume it was intentionally done
 if [[ -z "$brew_php_linked" ]]; then
   brew link --overwrite --force php@5.6
@@ -807,7 +694,7 @@ fi
 # keep the 2.2 config files. The "LockFile" directive is an artifact of 2.2
 #   http://apple.stackexchange.com/questions/211015/el-capitan-apache-error-message-ah00526
 # This simple commenting out of the line seems to work just fine.
-sudo sed -i .bak 's;^\(LockFile\);# \1;' /etc/apache2/extra/httpd-mpm.conf
+sudo sed -i.bak 's;^\(LockFile\);# \1;' /etc/apache2/extra/httpd-mpm.conf
 sudo rm -f /etc/apache2/extra/httpd-mpm.conf.bak
 
 qt pushd /etc/
@@ -820,97 +707,23 @@ sudo apachectl -k restart
 sleep 3
 # -- SETUP ADMINER ------------------------------------------------------------
 show_status 'Setting up adminer'
-if [[ -d "$DEV_DIR/adminer/webroot" ]] && [[ "$(readlink "$DEV_DIR/adminer/webroot/index.php")" != "/usr/local/share/adminer/index.php" ]]; then
-  cat <<EOT
+[[ ! -d "$DEST_DIR/adminer/webroot" ]] && mkdir  -p "$DEST_DIR/adminer/webroot"
+[[ ! -w "$DEST_DIR/adminer/webroot" ]] && chmod u+w "$DEST_DIR/adminer/webroot"
+latest="$(curl -IkLs https://github.com/vrana/adminer/releases/latest | col -b | grep Location | grep -E -o '[^/]+$')"
 
-It looks like you already have "$DEV_DIR/adminer/webroot" on your system. If
-you'd like to use the brew maintained version of Adminer, you can overwrite
-your current install of adminer with:
-
-  ln -svf "/usr/local/share/adminer/index.php" "$DEV_DIR/adminer/webroot/index.php"
-
-EOT
+if [[ -e "$DEST_DIR/adminer/webroot/index.php" ]]; then
+  if [[ "$(grep '\* @version' "$DEST_DIR/adminer/webroot/index.php" | grep -E -o '[0-9]+.*')" != "${latest/v/}" ]]; then
+    rm -f  "$DEST_DIR/adminer/webroot/index.php"
+    show_status 'Updating adminer to latest version'
+    curl -L -o "$DEST_DIR/adminer/webroot/index.php" "https://github.com/vrana/adminer/releases/download/$latest/adminer-${latest/v/}-en.php"
+  fi
 else
-  mkdir -p "$DEV_DIR/adminer/webroot"
-  ln -svf "/usr/local/share/adminer/index.php" "$DEV_DIR/adminer/webroot/index.php"
+  rm -f  "$DEST_DIR/adminer/webroot/index.php" # could be dead symlink
+  curl -L -o "$DEST_DIR/adminer/webroot/index.php" "https://github.com/vrana/adminer/releases/download/$latest/adminer-${latest/v/}-en.php"
 fi
 # -- SHOW THE USER CONFIRMATION PAGE ------------------------------------------
-if [[ ! -d "$DEV_DIR/slipstream/webroot" ]]; then
-  mkdir -p "$DEV_DIR/slipstream/webroot"
-fi
-
-cat <<EOT > "$DEV_DIR/slipstream/webroot/index.php"
-<div style="width: 600px; margin-bottom: 16px; margin-left: auto; margin-right: auto;">
-  <h4>If you're seeing this, then it's a good sign that everything's working</h4>
-<?php
-  if( ! empty(\$_SERVER['HTTPS']) && strtolower(\$_SERVER['HTTPS']) !== 'off') {
-    \$prefix = 'non-';
-    \$url = "http://{\$_SERVER['HTTP_HOST']}/";
-  } else {
-    \$prefix = '';
-    \$url = "https://{\$_SERVER['HTTP_HOST']}/";
-  }
-  print '<p>[test ' . \$prefix . 'SSL: <a href="' . \$url . '">' . \$url . '</a>]</p>';
-?>
-
-<p>
-  Your ~/Sites folder will now automatically serve websites from folders that
-  contain a "webroot" folder/symlink, using the .localhost TLD. This means that there
-  is no need to edit the /etc/hosts file for *.localhost domains. For example, if you:
-</p>
-<pre>
-  cd ~/Sites
-  git clone git@github.com:username/your-website.git
-</pre>
-<p>
-  the website will be served at:
-  <ul>
-    <li>http://your-website.localhost/ and</li>
-    <li>http://your-site.localhost.alt-3.com/</li>
-  </ul>
-  automatically.
-</p>
-<p>
-  Because of the way the apache vhost file VirtualDocumentRoot is configured,
-  git clones that contain a "." will fail.
-</p>
-<p>
-  Note that the mysql (MariaDB) root password is: root. You can confirm it by running:
-</p>
-<pre>
-  mysql -p -u root mysql
-</pre>
-
-<p>
-  You can now access Adminer at: <a href="http://adminer.localhost/">http://adminer.localhost/</a>
-  using the same mysql credentials.
-  Optionally, you can download a
-  <a href="https://www.adminer.org/#extras" target="_blank">custom theme</a> adminer.css
-  to "$DEV_DIR/adminer/webroot/adminer.css"
-</p>
-
-<h4>These are the packages were installed</h4>
-<p>
-  <strong>Brew:</strong>
-  $(clean <(get_pkgs "brew cask")) $(clean <(get_pkgs "brew php")) $(clean <(get_pkgs "brew leaves"))
-</p>
-
-<p>
-  <strong>Gems:</strong>
-  $(clean <(get_pkgs "gem"))
-</p>
-
-<p>
-  <strong>NPM:</strong>
-  $(clean <(get_pkgs "npm"))
-</p>
-</div>
-
-<?php
-  phpinfo();
-?>
-EOT
-
+[[ ! -d "$DEST_DIR/slipstream/webroot" ]] && mkdir -p "$DEST_DIR/slipstream/webroot"
+get_conf "slipstream" > "$DEST_DIR/slipstream/webroot/index.php"
 open http://slipstream.localhost/
 # -----------------------------------------------------------------------------
 # We're done! Now,...
@@ -949,11 +762,8 @@ vlc
 # End: brew cask
 # -----------------------------------------------------------------------------
 # Start: brew php
-# This is dumb. Drush has a dependency on brew php, and composer but won't
-# install them automatically. This entire script depends on 'sort -u' to
-# determine what needs to be installed... so, creating php.
 # Php 7.2 dropped mcrypt support. Previous versions now have it built in: php -m | grep mcrypt
-# php
+php
 php@5.6
 php@7.0
 php@7.1
@@ -968,7 +778,6 @@ php@7.1
 igbinary
 imagick
 memcached:php@5.6-2.2.0
-opcache
 xdebug:php@5.6-2.5.5
 # End: pecl
 # -----------------------------------------------------------------------------
@@ -976,7 +785,6 @@ xdebug:php@5.6-2.5.5
 # Development Envs
 node
 # Database
-adminer
 mariadb
 # Network
 dnsmasq
@@ -988,13 +796,8 @@ bash-git-prompt
 apachetop
 composer
 coreutils
-drupalconsole
-drush
 php-cs-fixer
 pngcrush
-psysh
-symfony-installer
-terminus
 the_silver_searcher
 wp-cli
 # End: brew leaves
@@ -1006,12 +809,255 @@ capistrano -v 2.15.5
 # End: gem
 # -----------------------------------------------------------------------------
 # Start: npm
-bower
 csslint
 fixmyjs
 grunt-cli
 js-beautify
 jshint
-yo
 # End: npm
+# -----------------------------------------------------------------------------
+# Start: system-requirement
+cat <<EOT
+Sorry! This script is currently only compatible with:
+  Yosemite    (10.10*)
+  El Capitan  (10.11*)
+  Sierra      (10.12*)
+  High Sierra (10.13*)
+You're running:
+
+$(sw_vers)
+
+EOT
+# End: system-requirement
+# -----------------------------------------------------------------------------
+# Start: all-systems-go
+cat <<EOT
+
+OK. It looks like we're ready to go.
+*******************************************************************************
+***** NOTE: This script assumes a "pristine" installation of Yosemite,    *****
+***** El Capitan, or Sierra. If you've already made changes to files in   *****
+***** /etc, then all bets are off. You have been WARNED!                  *****
+*******************************************************************************
+If you wish to continue, then this is what I'll be doing:
+  - Git-ifying your /etc folder
+  - Allow for password-less sudo by altering /etc/sudoers
+  - Install home brew, and some brew packages
+  - Update the System Ruby Gem, and install some gems
+  - Install some npm packages
+  -- Configure:
+    - Postfix (Disable outgoing mail)
+    - MariaDB (InnoDB tweaks, etc.)
+    - Php.ini (Misc. configurations)
+    - Apache2 (Enable modules, and add wildcard vhost conf)
+      [including ServerAlias for *.localhost.metaltoad-sites.com, and *.xip.io]
+    - Dnsmasq (Resolve *.localhost domains w/OUT /etc/hosts editing)
+EOT
+# End: all-systems-go
+# -----------------------------------------------------------------------------
+# Start: mysqld_innodb.cnf
+cat <<EOT
+[mysqld]
+innodb_file_per_table = 1
+socket = /tmp/mysql.sock
+
+query_cache_type = 1
+query_cache_size = 128M
+query_cache_limit = 2M
+max_allowed_packet = 64M
+
+default_storage_engine = InnoDB
+innodb_flush_method=O_DIRECT
+innodb_buffer_pool_size = 512M
+innodb_log_buffer_size = 16M
+innodb_flush_log_at_trx_commit = 0
+# Deprecated: innodb_locks_unsafe_for_binlog = 1
+innodb_log_file_size = 256M
+
+tmp_table_size = 32M
+max_heap_table_size = 32M
+thread_cache_size = 4
+query_cache_limit = 2M
+join_buffer_size = 8M
+bind-address = 127.0.0.1
+key_buffer_size = 256M
+EOT
+# End: mysqld_innodb.cnf
+# -----------------------------------------------------------------------------
+# Start: localhost.conf
+cat <<EOT
+<VirtualHost *:80>
+  ServerAdmin $USER@localhost
+  ServerAlias *.localhost *.vmlocalhost *.localhost.metaltoad-sites.com *.xip.io
+  VirtualDocumentRoot $DEST_DIR/%1/webroot
+
+  UseCanonicalName Off
+
+  LogFormat "%V %h %l %u %t \"%r\" %s %b" vcommon
+  CustomLog "/var/log/apache2/access_log" vcommon
+  ErrorLog "/var/log/apache2/error_log"
+
+  # With the switch to php-fpm, the apache2/other/php5.conf is not "Include"-ed, so need to...
+  AddType application/x-httpd-php .php
+  AddType application/x-httpd-php-source .phps
+
+  <IfModule dir_module>
+    DirectoryIndex index.html index.php
+  </IfModule>
+
+  # Depends on: LoadModule proxy_fcgi_module libexec/apache2/mod_proxy_fcgi.so in $HTTPD_CONF
+  #   http://serverfault.com/a/672969
+  #   https://httpd.apache.org/docs/2.4/mod/mod_proxy_fcgi.html
+  # This is to forward all PHP to php-fpm.
+  <FilesMatch \\.php$>
+    SetHandler "${PHP_FPM_HANDLER}"
+  </FilesMatch>
+
+  <Proxy ${PHP_FPM_PROXY}>
+    ProxySet connectiontimeout=5 timeout=1800
+  </Proxy>
+
+  <Directory "$DEST_DIR">
+    AllowOverride All
+    Options +Indexes +FollowSymLinks +ExecCGI
+    Require all granted
+    RewriteBase /
+  </Directory>
+</VirtualHost>
+
+Listen 443
+<VirtualHost *:443>
+  ServerAdmin $USER@localhost
+  ServerAlias *.localhost *.vmlocalhost *.localhost.metaltoad-sites.com
+  VirtualDocumentRoot $DEST_DIR/%1/webroot
+
+  SSLEngine On
+  SSLCertificateFile    /private/etc/apache2/ssl/server.crt
+  SSLCertificateKeyFile /private/etc/apache2/ssl/server.key
+
+  UseCanonicalName Off
+
+  LogFormat "%V %h %l %u %t \"%r\" %s %b" vcommon
+  CustomLog "/var/log/apache2/access_log" vcommon
+  ErrorLog "/var/log/apache2/error_log"
+
+  # With the switch to php-fpm, the apache2/other/php5.conf is not "Include"-ed, so need to...
+  AddType application/x-httpd-php .php
+  AddType application/x-httpd-php-source .phps
+
+  <IfModule dir_module>
+    DirectoryIndex index.html index.php
+  </IfModule>
+
+  # Depends on: LoadModule proxy_fcgi_module libexec/apache2/mod_proxy_fcgi.so in $HTTPD_CONF
+  #   http://serverfault.com/a/672969
+  #   https://httpd.apache.org/docs/2.4/mod/mod_proxy_fcgi.html
+  # This is to forward all PHP to php-fpm.
+  <FilesMatch \\.php$>
+    SetHandler "${PHP_FPM_HANDLER}"
+  </FilesMatch>
+
+  <Proxy ${PHP_FPM_PROXY}>
+    ProxySet connectiontimeout=5 timeout=240
+  </Proxy>
+
+  <Directory "$DEST_DIR">
+    AllowOverride All
+    Options +Indexes +FollowSymLinks +ExecCGI
+    Require all granted
+    RewriteBase /
+  </Directory>
+</VirtualHost>
+EOT
+# End: localhost.conf
+# -----------------------------------------------------------------------------
+# Start: ext-xdebug.ini
+cat <<EOT
+[xdebug]
+ xdebug.remote_enable=On
+ xdebug.remote_host=127.0.0.1
+ xdebug.remote_port=9000
+ xdebug.remote_handler="dbgp"
+ xdebug.remote_mode=req;
+
+ xdebug.profiler_enable_trigger=1;
+ xdebug.trace_enable_trigger=1;
+ xdebug.trace_output_name = "trace.out.%t-%s.%u"
+ xdebug.profiler_output_name = "cachegrind.out.%t-%s.%u"
+EOT
+# End: ext-xdebug.ini
+# -----------------------------------------------------------------------------
+# Start: slipstream
+cat <<EOT
+<div style="width: 600px; margin-bottom: 16px; margin-left: auto; margin-right: auto;">
+  <h4>If you're seeing this, then it's a good sign that everything's working</h4>
+<?php
+  if( ! empty(\$_SERVER['HTTPS']) && strtolower(\$_SERVER['HTTPS']) !== 'off') {
+    \$prefix = 'non-';
+    \$url = "http://{\$_SERVER['HTTP_HOST']}/";
+  } else {
+    \$prefix = '';
+    \$url = "https://{\$_SERVER['HTTP_HOST']}/";
+  }
+  print '<p>[test ' . \$prefix . 'SSL: <a href="' . \$url . '">' . \$url . '</a>]</p>';
+?>
+
+<p>
+  Your ~/Sites folder will now automatically serve websites from folders that
+  contain a "webroot" folder/symlink, using the .localhost TLD. This means that there
+  is no need to edit the /etc/hosts file for *.localhost domains. For example, if you:
+</p>
+<pre>
+  cd ~/Sites
+  git clone git@github.com:username/your-website.git
+</pre>
+<p>
+  the website will be served at:
+  <ul>
+    <li>http://your-website.localhost/ and</li>
+    <li>http://your-site.localhost.metaltoad-sites.com/</li>
+  </ul>
+  automatically.
+</p>
+<p>
+  Because of the way the apache vhost file VirtualDocumentRoot is configured,
+  git clones that contain a "." will fail.
+</p>
+<p>
+  Note that the mysql (MariaDB) root password is: root. You can confirm it by running:
+</p>
+<pre>
+  mysql -p -u root mysql
+</pre>
+
+<p>
+  You can now access Adminer at: <a href="http://adminer.localhost/">http://adminer.localhost/</a>
+  using the same mysql credentials.
+  Optionally, you can download a
+  <a href="https://www.adminer.org/#extras" target="_blank">custom theme</a> adminer.css
+  to "$DEST_DIR/adminer/webroot/adminer.css"
+</p>
+
+<h4>These are the packages were installed</h4>
+<p>
+  <strong>Brew:</strong>
+  $(clean <(get_pkgs "brew cask")) $(clean <(get_pkgs "brew php")) $(clean <(get_pkgs "brew leaves"))
+</p>
+
+<p>
+  <strong>Gems:</strong>
+  $(clean <(get_pkgs "gem"))
+</p>
+
+<p>
+  <strong>NPM:</strong>
+  $(clean <(get_pkgs "npm"))
+</p>
+</div>
+
+<?php
+  phpinfo();
+?>
+EOT
+# End: slipstream
 # -----------------------------------------------------------------------------
