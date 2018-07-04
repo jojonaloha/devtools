@@ -890,7 +890,7 @@ cat <<EOT
     DirectoryIndex index.html index.php
   </IfModule>
 
-  # Depends on: 'LoadModule proxy_fcgi_module lib/httpd/modules/mod_proxy_fcgi.so' in $HTTPD_CONF
+  # Depends on: "LoadModule proxy_fcgi_module lib/httpd/modules/mod_proxy_fcgi.so" in $HTTPD_CONF
   #   http://serverfault.com/a/672969
   #   https://httpd.apache.org/docs/2.4/mod/mod_proxy_fcgi.html
   # This is to forward all PHP to php-fpm.
@@ -934,7 +934,7 @@ Listen 443
     DirectoryIndex index.html index.php
   </IfModule>
 
-  # Depends on: 'LoadModule proxy_fcgi_module lib/httpd/modules/mod_proxy_fcgi.so' in $HTTPD_CONF
+  # Depends on: "LoadModule proxy_fcgi_module lib/httpd/modules/mod_proxy_fcgi.so" in $HTTPD_CONF
   #   http://serverfault.com/a/672969
   #   https://httpd.apache.org/docs/2.4/mod/mod_proxy_fcgi.html
   # This is to forward all PHP to php-fpm.
