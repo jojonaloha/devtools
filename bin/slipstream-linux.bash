@@ -696,6 +696,8 @@ curl
 default-jdk
 git
 sshuttle
+# For linuxbrew httpd
+uuid-dev
 # For linuxbrew php
 libbz2-dev
 libedit-dev
